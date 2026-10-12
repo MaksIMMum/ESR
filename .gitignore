@@ -17,12 +17,11 @@
 *.pch
 
 # Libraries
-*.lib
 *.a
 *.la
 *.lo
 
-# Shared objects (inc. Windows DLLs)
+# Shared objects
 *.dll
 *.so
 *.so.*
@@ -32,24 +31,25 @@
 *.exe
 *.out
 *.app
-*.i*86
-*.x86_64
-*.hex
 
-# Debug files
-*.dSYM/
-*.su
-*.idb
-*.pdb
+# ESP-IDF / PlatformIO
+.pio/
+build/
+sdkconfig
+sdkconfig.old
+sdkconfig.*
+!sdkconfig.defaults
+dependencies.lock
+managed_components/
 
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*~
 
-# debug information files
-*.dwo
+# Output frame captures
+/*.ppm
+/*.png
+/bringup_log.txt
+tests/reference
