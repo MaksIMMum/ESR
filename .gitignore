@@ -34,7 +34,7 @@
 
 # ESP-IDF / PlatformIO
 .pio/
-build/
+build*/
 sdkconfig
 sdkconfig.old
 sdkconfig.*
@@ -52,4 +52,8 @@ managed_components/
 /*.ppm
 /*.png
 /bringup_log.txt
+output/**/*.ppm
+output/**/*.png
+output/**/*.txt
+!output/**/.gitkeep
 tests/reference

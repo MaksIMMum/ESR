@@ -73,20 +73,26 @@ while True:
         if line.startswith("Done"):
             break
 
-with open("bringup_log.txt", "w") as f:
+out_dir = os.path.join("output", "esp32")
+os.makedirs(out_dir, exist_ok=True)
+
+log_path = os.path.join(out_dir, "bringup_log.txt")
+with open(log_path, "w") as f:
     f.write("\n".join(log) + "\n")
-print("Saved bringup_log.txt")
+print(f"Saved {log_path}")
 
 if data:
     raw = bytes.fromhex("".join(data))
     assert len(raw) == w * h * 3, f"expected {w*h*3} bytes, got {len(raw)}"
-    with open("frame.ppm", "wb") as f:
+    ppm_path = os.path.join(out_dir, "frame.ppm")
+    with open(ppm_path, "wb") as f:
         f.write(f"P6\n{w} {h}\n255\n".encode())
         f.write(raw)
-    print("Saved frame.ppm")
+    print(f"Saved {ppm_path}")
     try:
         from PIL import Image
-        Image.frombytes("RGB", (w, h), raw).resize((w * 4, h * 4), Image.NEAREST).save("frame.png")
-        print("Saved frame.png (4x enlarged)")
+        png_path = os.path.join(out_dir, "frame.png")
+        Image.frombytes("RGB", (w, h), raw).resize((w * 4, h * 4), Image.NEAREST).save(png_path)
+        print(f"Saved {png_path} (4x enlarged)")
     except ImportError:
         print("Install Pillow (pip install pillow) to also generate frame.png")
