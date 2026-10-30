@@ -1,0 +1,42 @@
+name: ESR Continuous Integration
+
+on:
+  push:
+    branches: [ main, feat/*, "task-*" ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  desktop-build-and-test:
+    name: Desktop Native Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential
+
+      - name: Configure CMake for Desktop
+        run: cmake -B build_desktop -DESR_BUILD_DESKTOP=ON
+
+      - name: Compile Desktop Target
+        run: cmake --build build_desktop --parallel
+
+      - name: Run Offscreen Renderer
+        run: ./build_desktop/esr_desktop
+
+      - name: Verify Output PPM Frame
+        run: |
+          test -f output/desktop/frame.ppm
+          test -s output/desktop/frame.ppm
+          echo "Verified output/desktop/frame.ppm successfully generated."
+
+      - name: Upload Output Frame Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-rendered-frame
+          path: output/desktop/frame.ppm
