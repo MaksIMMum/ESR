@@ -6,11 +6,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_timer.h"
-
+#include "esp_log.h"
+#include "st7789.h"
+#include "test_photo.h"
 #else
 #include <time.h>
 #endif
-// todo later for running on laptop .
+
 #define W 160
 #define H 120
 
@@ -31,9 +33,9 @@ static void render_triangle(void)
     const float vy[3] = {8.0f, 110.0f, 110.0f};
 
     const float col[3][3] = {
-        {1.0f, 0.0f, 0.0f}, // r
-        {0.0f, 1.0f, 0.0f}, // g
-        {0.0f, 0.0f, 1.0f}, // b
+        {1.0f, 0.0f, 0.0f}, // Red
+        {0.0f, 1.0f, 0.0f}, // Green
+        {0.0f, 0.0f, 1.0f}, // Blue
     };
 
     float area = edge(vx[0], vy[0], vx[1], vy[1], vx[2], vy[2]);
@@ -89,7 +91,37 @@ static void dump_frame(void)
 
 void app_main(void)
 {
-    vTaskDelay(pdMS_TO_TICKS(2000));
+    printf("\n=========================================\n");
+    printf("       ESR Bringup on ESP32-S3          \n");
+    printf("=========================================\n");
+
+#ifdef ESP_PLATFORM
+    printf("Initializing ST7789 display (240x320)...\n");
+    esp_err_t err = st7789_init();
+    if (err == ESP_OK) {
+        // Display full-screen photo (240x320)
+        printf("Display initialized! Rendering full-screen photo (%dx%d)...\n", PHOTO_WIDTH, PHOTO_HEIGHT);
+        int64_t tp0 = esp_timer_get_time();
+        st7789_draw_bitmap(0, 0, PHOTO_WIDTH, PHOTO_HEIGHT, photo_data);
+        int64_t tp1 = esp_timer_get_time();
+        printf("Photo rendered and sent in: %.2f ms!\n", (double)(tp1 - tp0) / 1000.0);
+
+        // Show photo for 4 seconds before starting triangle loop
+        vTaskDelay(pdMS_TO_TICKS(4000));
+
+        // Fill background with dark slate blue (RGB565: 0x10A2)
+        printf("Switching to 3D triangle rasterizer...\n");
+        st7789_fill_color(0x10A2);
+    } else {
+        printf("Warning: ST7789 initialization failed: %s\n", esp_err_to_name(err));
+    }
+#endif
+
+    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    // Center 160x120 rendered triangle on the 240x320 display
+    const int dst_x = (240 - W) / 2; // 40
+    const int dst_y = (320 - H) / 2; // 100
 
     while (1) {
         printf("\n=== Rendering Triangle ===\n");
@@ -97,14 +129,23 @@ void app_main(void)
         render_triangle();
         int64_t t1 = esp_timer_get_time();
 
-        double ms = (double)(t1 - t0) / 1000.0;
-        printf("Render time: %.2f ms\n", ms);
+        double render_ms = (double)(t1 - t0) / 1000.0;
+        printf("Render time: %.2f ms\n", render_ms);
+
+#ifdef ESP_PLATFORM
+        int64_t tb0 = esp_timer_get_time();
+        st7789_draw_rgb888_buffer(dst_x, dst_y, W, H, &fb[0][0][0]);
+        int64_t tb1 = esp_timer_get_time();
+        double blit_ms = (double)(tb1 - tb0) / 1000.0;
+        printf("Screen Blit time: %.2f ms (Total: %.2f ms)\n", blit_ms, render_ms + blit_ms);
+#endif
 
         print_ascii();
+
 #if DUMP_FRAME
         dump_frame();
 #endif
-        printf("Done. Next render in 20 s.\n");
-        vTaskDelay(pdMS_TO_TICKS(20000));
+        printf("Frame sent to ST7789 screen! Next refresh in 3 s.\n");
+        vTaskDelay(pdMS_TO_TICKS(3000));
     }
 }
