@@ -110,10 +110,11 @@ static void test_process_triangle_deterministic_3d() {
     Mat4 mvp = mat4_mul_mat4(proj, mv);
 
     Viewport vp = {0.0f, 0.0f, 160.0f, 120.0f, 0.0f, 1.0f};
-    ScreenTriangle out_tri;
+    ScreenTriangle out_tris[ESR_MAX_CLIPPED_TRIANGLES];
 
-    bool ok = process_triangle(v0, v1, v2, mvp, vp, out_tri);
-    CHECK(ok == true);
+    int count = process_triangle(v0, v1, v2, mvp, vp, out_tris);
+    CHECK(count == 1); // Fully in front of the camera: nothing clipped
+    const ScreenTriangle& out_tri = out_tris[0];
 
     // Vertex 0 (top vertex) should be horizontally centered on screen (x == 80)
     CHECK(feq(out_tri.v[0].x, 80.0f));
@@ -134,6 +135,129 @@ static void test_process_triangle_deterministic_3d() {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/* Near-plane clipping                                                  */
+/* ------------------------------------------------------------------ */
+
+static ClipVertex cv(float x, float y, float z, float w, Vec3 color) {
+    ClipVertex v;
+    v.position = Vec4{x, y, z, w};
+    v.color = color;
+    return v;
+}
+
+static float near_dist(const ClipVertex& v) { return v.position.z + v.position.w; }
+
+/** Signed 2D area of the triangle after perspective division (sign = winding). */
+static float ndc_signed_area(const ClipTriangle& t) {
+    float x[3], y[3];
+    for (int i = 0; i < 3; ++i) {
+        x[i] = t.v[i].position.x / t.v[i].position.w;
+        y[i] = t.v[i].position.y / t.v[i].position.w;
+    }
+    return (x[1] - x[0]) * (y[2] - y[0]) - (x[2] - x[0]) * (y[1] - y[0]);
+}
+
+static const Vec3 RED   = {1.0f, 0.0f, 0.0f};
+static const Vec3 GREEN = {0.0f, 1.0f, 0.0f};
+static const Vec3 BLUE  = {0.0f, 0.0f, 1.0f};
+
+static void test_clip_all_inside() {
+    ClipTriangle in = {{cv(0, 1, 0, 1, RED), cv(-1, -1, 0, 1, GREEN), cv(1, -1, 0, 1, BLUE)}};
+    ClipTriangle out[ESR_MAX_CLIPPED_TRIANGLES];
+
+    CHECK(clip_triangle_near(in, out) == 1);
+    for (int i = 0; i < 3; ++i) {
+        CHECK(vec4_eq(out[0].v[i].position, in.v[i].position));
+        CHECK(vec3_eq(out[0].v[i].color, in.v[i].color));
+    }
+}
+
+static void test_clip_all_behind() {
+    // z + w < 0 for every vertex (includes w <= 0, i.e. behind the camera)
+    ClipTriangle in = {{cv(0, 1, -3, 1, RED), cv(-1, -1, 1, -2, GREEN), cv(1, -1, -0.5f, 0, BLUE)}};
+    ClipTriangle out[ESR_MAX_CLIPPED_TRIANGLES];
+
+    CHECK(clip_triangle_near(in, out) == 0);
+}
+
+static void test_clip_one_vertex_behind() {
+    // v0 behind (d = -1), v1/v2 in front (d = 1) -> quad -> 2 triangles
+    ClipTriangle in = {{cv(0, 1, -2, 1, RED), cv(-1, -1, 0, 1, GREEN), cv(1, -1, 0, 1, BLUE)}};
+    ClipTriangle out[ESR_MAX_CLIPPED_TRIANGLES];
+
+    int n = clip_triangle_near(in, out);
+    CHECK(n == 2);
+
+    int on_plane = 0;
+    for (int t = 0; t < n; ++t) {
+        for (int i = 0; i < 3; ++i) {
+            const ClipVertex& v = out[t].v[i];
+            CHECK(near_dist(v) >= -EPS);
+            if (feq(near_dist(v), 0.0f)) {
+                ++on_plane;
+                // Edges v0->v1 and v2->v0 are cut exactly halfway: color is a 50/50 mix
+                CHECK(feq(v.color.x, 0.5f));
+                CHECK(feq(v.position.y, 0.0f));
+            }
+        }
+        CHECK(ndc_signed_area(out[t]) * ndc_signed_area(in) > 0.0f); // winding kept
+    }
+    CHECK(on_plane >= 2); // both new vertices are on the near plane
+}
+
+static void test_clip_two_vertices_behind() {
+    // v0 in front (d = 1), v1/v2 behind (d = -1) -> 1 smaller triangle
+    ClipTriangle in = {{cv(0, 1, 0, 1, RED), cv(-1, -1, -2, 1, GREEN), cv(1, -1, -2, 1, BLUE)}};
+    ClipTriangle out[ESR_MAX_CLIPPED_TRIANGLES];
+
+    CHECK(clip_triangle_near(in, out) == 1);
+    CHECK(vec4_eq(out[0].v[0].position, in.v[0].position));
+    for (int i = 1; i < 3; ++i) {
+        CHECK(feq(near_dist(out[0].v[i]), 0.0f));
+        CHECK(feq(out[0].v[i].color.x, 0.5f)); // halfway from red to green/blue
+        CHECK(feq(out[0].v[i].position.y, 0.0f));
+    }
+    CHECK(ndc_signed_area(out[0]) * ndc_signed_area(in) > 0.0f);
+}
+
+/**
+ * Fly the camera towards and through a triangle. Every produced vertex must be
+ * finite, in front of the camera (inv_w > 0) and inside the depth range.
+ */
+static void test_camera_fly_through() {
+    Vertex3D v0 = {{ 0.0f,  1.0f, 0.0f}, RED};
+    Vertex3D v1 = {{-1.0f, -1.0f, 0.0f}, GREEN};
+    Vertex3D v2 = {{ 1.0f, -1.0f, 0.0f}, BLUE};
+    Mat4 proj = mat4_perspective(deg_to_rad(60.0f), 160.0f / 120.0f, 0.1f, 100.0f);
+    Viewport vp = {0.0f, 0.0f, 160.0f, 120.0f, 0.0f, 1.0f};
+
+    bool saw_rejected = false, saw_split = false;
+    for (int step = 0; step <= 80; ++step) {
+        // Camera at z from 2.0 down to -2.0, tilted (up and right) so the near plane crosses the triangle
+        float cam_z = 2.0f - step * 0.05f;
+        Mat4 view = mat4_look_at(vec3(0.0f, 0.0f, cam_z), vec3(0.4f, 0.5f, cam_z - 1.0f), vec3(0.0f, 1.0f, 0.0f));
+        Mat4 mvp = mat4_mul_mat4(proj, view);
+
+        ScreenTriangle out[ESR_MAX_CLIPPED_TRIANGLES];
+        int n = process_triangle(v0, v1, v2, mvp, vp, out);
+        CHECK(n >= 0 && n <= ESR_MAX_CLIPPED_TRIANGLES);
+        if (n == 0) saw_rejected = true;
+        if (n == 2) saw_split = true;
+
+        for (int t = 0; t < n; ++t) {
+            for (int i = 0; i < 3; ++i) {
+                const ScreenVertex& s = out[t].v[i];
+                CHECK(std::isfinite(s.x) && std::isfinite(s.y));
+                CHECK(s.inv_w > 0.0f);
+                CHECK(s.z >= -EPS && s.z <= 1.0f + EPS);
+            }
+        }
+    }
+    CHECK(saw_rejected); // camera ended up behind the triangle
+    CHECK(saw_split);    // at least one frame had the near plane cutting the triangle
+}
+
 int main() {
     printf("Running ESR 3D Pipeline unit tests...\n");
 
@@ -143,6 +267,11 @@ int main() {
     test_perspective_divide_zero_w();
     test_viewport_transform();
     test_process_triangle_deterministic_3d();
+    test_clip_all_inside();
+    test_clip_all_behind();
+    test_clip_one_vertex_behind();
+    test_clip_two_vertices_behind();
+    test_camera_fly_through();
 
     printf("ESR Pipeline tests completed: %d checks, %d failed.\n", g_checks, g_failures);
     return (g_failures == 0) ? 0 : 1;
