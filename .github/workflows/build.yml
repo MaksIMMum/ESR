@@ -2,7 +2,7 @@ name: ESR Continuous Integration
 
 on:
   push:
-    branches: [ main, feat/*, "task-*" ]
+    branches: [ main, feat/*, "task-*", "task/*" ]
   pull_request:
     branches: [ main ]
 
@@ -23,10 +23,13 @@ jobs:
       - name: Configure CMake for Desktop
         run: cmake -B build_desktop -DESR_BUILD_DESKTOP=ON
 
-      - name: Compile Desktop Target
+      - name: Compile Desktop Target & Tests
         run: cmake --build build_desktop --parallel
 
-      - name: Run Offscreen Renderer
+      - name: Run Unit Tests (Math & Pipeline)
+        run: ctest --test-dir build_desktop --output-on-failure
+
+      - name: Run 3D Pipeline Desktop Renderer
         run: ./build_desktop/esr_desktop
 
       - name: Verify Output PPM Frame
