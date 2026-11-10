@@ -123,9 +123,10 @@ int main(int argc, char **argv)
         Mat4 model = mat4_mul_mat4(trans, mat4_mul_mat4(rot_x, rot_y));
         Mat4 mvp   = mat4_mul_mat4(proj, mat4_mul_mat4(view, model));
 
-        ScreenTriangle st;
-        if (process_triangle(tri[0], tri[1], tri[2], mvp, vp, st)) {
-            render_screen_triangle(st);
+        ScreenTriangle st[ESR_MAX_CLIPPED_TRIANGLES];
+        const int st_count = process_triangle(tri[0], tri[1], tri[2], mvp, vp, st);
+        for (int t = 0; t < st_count; ++t) {
+            render_screen_triangle(st[t]);
         }
 
         char frame_path[128];
@@ -138,20 +139,54 @@ int main(int argc, char **argv)
             printf("Still frame saved to 'output/desktop/frame.ppm' (Tilted 3D view at 50 deg):\n");
             for (int i = 0; i < 3; ++i) {
                 printf("  V%d: Screen(%.1f, %.1f) Depth=%.3f InvW=%.3f\n",
-                       i, st.v[i].x, st.v[i].y, st.v[i].z, st.v[i].inv_w);
+                       i, st[0].v[i].x, st[0].v[i].y, st[0].v[i].z, st[0].v[i].inv_w);
             }
         }
     }
 
-    // 4. Assemble the rotation frames into a smooth animated GIF
+    // 4. Near-plane clipping check: fly the camera towards and through the triangle.
+    //    Without clipping, vertices behind the camera (w <= 0) would be mirrored
+    //    across the screen or blow up to inf/NaN as the camera passes the triangle.
+    ensure_dir("output/desktop/flythrough");
+    printf("\nGenerating 40-frame camera fly-through sequence (near-plane clipping)...\n");
+
+    const Mat4 tri_model = mat4_translate(vec3(0.0f, 0.0f, -2.5f));
+    for (int frame = 0; frame < 40; ++frame) {
+        memset(fb, 0, sizeof(fb));
+
+        // Camera moves from z = 0 to z = -3.0 (the triangle sits at z = -2.5),
+        // looking slightly up and to the right so the near plane cuts it unevenly.
+        const float cam_z = -(float)frame * 0.075f;
+        Mat4 fly_view = mat4_look_at(vec3(0.0f, 0.0f, cam_z),
+                                     vec3(0.3f, 0.2f, cam_z - 1.0f),
+                                     vec3(0.0f, 1.0f, 0.0f));
+        Mat4 mvp = mat4_mul_mat4(proj, mat4_mul_mat4(fly_view, tri_model));
+
+        ScreenTriangle st[ESR_MAX_CLIPPED_TRIANGLES];
+        const int st_count = process_triangle(tri[0], tri[1], tri[2], mvp, vp, st);
+        for (int t = 0; t < st_count; ++t) {
+            render_screen_triangle(st[t]);
+        }
+        printf("  frame %02d: camera z = %+.3f -> %d triangle(s)\n", frame, cam_z, st_count);
+
+        char frame_path[128];
+        snprintf(frame_path, sizeof(frame_path), "output/desktop/flythrough/f_%02d.ppm", frame);
+        save_ppm(frame_path);
+    }
+
+    // 5. Assemble the rotation frames into a smooth animated GIF
     printf("\nAssembling 'output/desktop/spinning_3d.gif' using ImageMagick...\n");
     int ret = system("magick -delay 6 -loop 0 output/desktop/frames/f_*.ppm -scale 300% output/desktop/spinning_3d.gif");
     if (ret == 0) {
         printf("Successfully generated animated 3D preview: output/desktop/spinning_3d.gif!\n");
     }
 
+    if (system("magick -delay 8 -loop 0 output/desktop/flythrough/f_*.ppm -scale 300% output/desktop/flythrough.gif") == 0) {
+        printf("Successfully generated fly-through preview: output/desktop/flythrough.gif!\n");
+    }
+
     // Scale still frame to PNG
-    system("magick output/desktop/frame.ppm -scale 400% output/desktop/frame_4x.png");
+    (void)!system("magick output/desktop/frame.ppm -scale 400% output/desktop/frame_4x.png");
 
     return 0;
 }

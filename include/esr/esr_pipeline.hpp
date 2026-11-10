@@ -73,6 +73,35 @@ struct Viewport {
 ClipVertex transform_mvp(const Vertex3D& vertex, const Mat4& mvp);
 
 /**
+ * Maximum number of triangles clip_triangle_near() can produce from one input triangle.
+ */
+constexpr int ESR_MAX_CLIPPED_TRIANGLES = 2;
+
+/**
+ * Clip a clip-space triangle against the near plane (z >= -w).
+ *
+ * Must run BEFORE perspective division. Vertices behind the camera have w <= 0,
+ * and dividing by such w either explodes (w ~ 0) or mirrors the vertex to the
+ * other side of the screen (w < 0). Clipping at z = -w guarantees w >= near > 0
+ * for every output vertex when a mat4_perspective() projection is used.
+ *
+ * Cases (number of vertices in front of the near plane):
+ *   3 -> 1 triangle (input copied unchanged)
+ *   2 -> 2 triangles (quad, split as a fan)
+ *   1 -> 1 smaller triangle
+ *   0 -> 0 triangles (fully rejected)
+ *
+ * Positions and all vertex attributes (color) are linearly interpolated in
+ * clip space at the intersection points, which is correct before the divide.
+ * Winding order is preserved, so backface culling still works afterwards.
+ *
+ * @param in  Input triangle in clip space.
+ * @param out Output array with room for ESR_MAX_CLIPPED_TRIANGLES triangles.
+ * @return Number of triangles written to `out` (0, 1 or 2).
+ */
+int clip_triangle_near(const ClipTriangle& in, ClipTriangle out[ESR_MAX_CLIPPED_TRIANGLES]);
+
+/**
  * Perform perspective division: Clip Space -> Normalized Device Coordinates (NDC).
  *
  * @param clip      Input clip vertex.
@@ -89,16 +118,19 @@ bool perspective_divide(const ClipVertex& clip, Vec3& out_ndc, float& out_inv_w)
 ScreenVertex viewport_transform(const Vec3& ndc, float inv_w, const Vec3& color, const Viewport& vp);
 
 /**
- * Convenience function: process a 3D triangle through MVP -> Perspective Divide -> Viewport.
+ * Full geometry stage for one triangle:
+ *   MVP -> Near-plane clipping -> Perspective Divide -> Viewport.
  *
- * @return true if all 3 vertices successfully transformed, false if any vertex failed division.
+ * @param out_triangles Output array with room for ESR_MAX_CLIPPED_TRIANGLES triangles.
+ * @return Number of screen triangles written (0 if the triangle is fully behind
+ *         the near plane or degenerate, otherwise 1 or 2).
  */
-bool process_triangle(const Vertex3D& v0,
-                      const Vertex3D& v1,
-                      const Vertex3D& v2,
-                      const Mat4& mvp,
-                      const Viewport& vp,
-                      ScreenTriangle& out_triangle);
+int process_triangle(const Vertex3D& v0,
+                     const Vertex3D& v1,
+                     const Vertex3D& v2,
+                     const Mat4& mvp,
+                     const Viewport& vp,
+                     ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES]);
 
 } // namespace esr
 
