@@ -7,51 +7,18 @@
 #include <cstdlib>
 
 #include "esr/esr_pipeline.hpp"
+#include "esr/esr_raster.hpp"
 
 #define W 160
 #define H 120
 
 static uint8_t fb[H][W][3];
 
-static float edge(float ax, float ay, float bx, float by, float px, float py)
-{
-    return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
-}
-
+// Rasterize into the global framebuffer with the core AABB + Pineda rasterizer.
 static void render_screen_triangle(const esr::ScreenTriangle& tri)
 {
-    const float vx[3] = {tri.v[0].x, tri.v[1].x, tri.v[2].x};
-    const float vy[3] = {tri.v[0].y, tri.v[1].y, tri.v[2].y};
-
-    const float col[3][3] = {
-        {tri.v[0].color.x, tri.v[0].color.y, tri.v[0].color.z},
-        {tri.v[1].color.x, tri.v[1].color.y, tri.v[1].color.z},
-        {tri.v[2].color.x, tri.v[2].color.y, tri.v[2].color.z},
-    };
-
-    float area = edge(vx[0], vy[0], vx[1], vy[1], vx[2], vy[2]);
-    if (area == 0.0f) {
-        return; // Degenerate edge
-    }
-
-    // Support both clockwise and counter-clockwise winding
-    for (int y = 0; y < H; ++y) {
-        for (int x = 0; x < W; ++x) {
-            float px = x + 0.5f;
-            float py = y + 0.5f;
-
-            float w0 = edge(vx[1], vy[1], vx[2], vy[2], px, py) / area;
-            float w1 = edge(vx[2], vy[2], vx[0], vy[0], px, py) / area;
-            float w2 = edge(vx[0], vy[0], vx[1], vy[1], px, py) / area;
-
-            if (w0 >= 0.0f && w1 >= 0.0f && w2 >= 0.0f) {
-                for (int c = 0; c < 3; ++c) {
-                    float v = w0 * col[0][c] + w1 * col[1][c] + w2 * col[2][c];
-                    fb[y][x][c] = (uint8_t)(v * 255.0f);
-                }
-            }
-        }
-    }
+    esr::Framebuffer target{&fb[0][0][0], W, H};
+    esr::rasterize_triangle(tri, target);
 }
 
 static int ensure_dir(const char *dir)

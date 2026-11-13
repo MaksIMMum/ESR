@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "esr/esr_raster.hpp"
+
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -27,7 +29,12 @@ static float edge(float ax, float ay, float bx, float by, float px, float py)
     return (px - ax) * (by - ay) - (py - ay) * (bx - ax);
 }
 
-static void render_triangle(void)
+/*
+ * Baseline: original bringup rasterizer. Visits all W*H pixels and does three
+ * float divisions per pixel (~32 ms/tri on ESP32-S3). Kept only for the
+ * benchmark comparison printed below.
+ */
+static void render_triangle_baseline(void)
 {
     const float vx[3] = {80.0f, 10.0f, 150.0f};
     const float vy[3] = {8.0f, 110.0f, 110.0f};
@@ -60,6 +67,26 @@ static void render_triangle(void)
     }
 }
 
+/* AABB + Pineda core rasterizer (src/core/raster.cpp), same triangle and colors. */
+static int render_triangle_esr(void)
+{
+    esr::ScreenTriangle tri;
+    const float vx[3] = {80.0f, 10.0f, 150.0f};
+    const float vy[3] = {8.0f, 110.0f, 110.0f};
+    const esr::Vec3 col[3] = {{1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f}};
+    for (int i = 0; i < 3; ++i) {
+        tri.v[i].x = vx[i];
+        tri.v[i].y = vy[i];
+        tri.v[i].z = 0.0f;
+        tri.v[i].inv_w = 1.0f;
+        tri.v[i].color = col[i];
+    }
+
+    memset(fb, 0, sizeof(fb));
+    esr::Framebuffer target{&fb[0][0][0], W, H};
+    return esr::rasterize_triangle(tri, target);
+}
+
 static void print_ascii(void)
 {
     for (int y = 0; y < H; y += 4) {
@@ -89,7 +116,7 @@ static void dump_frame(void)
 }
 #endif
 
-void app_main(void)
+extern "C" void app_main(void)
 {
     printf("\n=========================================\n");
     printf("       ESR Bringup on ESP32-S3          \n");
@@ -125,12 +152,26 @@ void app_main(void)
 
     while (1) {
         printf("\n=== Rendering Triangle ===\n");
-        int64_t t0 = esp_timer_get_time();
-        render_triangle();
-        int64_t t1 = esp_timer_get_time();
 
-        double render_ms = (double)(t1 - t0) / 1000.0;
-        printf("Render time: %.2f ms\n", render_ms);
+        // Baseline full-screen scan (bringup reference).
+        int64_t t0 = esp_timer_get_time();
+        render_triangle_baseline();
+        int64_t t1 = esp_timer_get_time();
+        double baseline_ms = (double)(t1 - t0) / 1000.0;
+
+        // AABB + Pineda, averaged over several runs for a stable number.
+        const int runs = 20;
+        int pixels = 0;
+        int64_t t2 = esp_timer_get_time();
+        for (int i = 0; i < runs; ++i) {
+            pixels = render_triangle_esr();
+        }
+        int64_t t3 = esp_timer_get_time();
+        double render_ms = (double)(t3 - t2) / 1000.0 / runs;
+
+        printf("Baseline (full-screen scan) time: %.2f ms\n", baseline_ms);
+        printf("Render time: %.3f ms (AABB + Pineda, %d px, avg of %d) -> speedup %.1fx\n",
+               render_ms, pixels, runs, baseline_ms / render_ms);
 
 #ifdef ESP_PLATFORM
         int64_t tb0 = esp_timer_get_time();

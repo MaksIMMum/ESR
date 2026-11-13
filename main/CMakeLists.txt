@@ -1,6 +1,7 @@
 FILE(GLOB_RECURSE app_sources 
     ${CMAKE_SOURCE_DIR}/main/*.* 
     ${CMAKE_SOURCE_DIR}/platform/esp32/*.*
+    ${CMAKE_SOURCE_DIR}/src/core/*.cpp
 )
 
 idf_component_register(

@@ -48,6 +48,24 @@ if(ESR_BUILD_DESKTOP OR NOT DEFINED ENV{IDF_PATH})
     target_link_libraries(test_esr_pipeline PRIVATE m)
     add_test(NAME test_esr_pipeline COMMAND test_esr_pipeline)
 
+    add_executable(test_esr_raster
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_esr_raster.cpp
+        ${CORE_SOURCES}
+    )
+    target_compile_options(test_esr_raster PRIVATE -Wall -Wextra -O2)
+    target_link_libraries(test_esr_raster PRIVATE m)
+    add_test(NAME test_esr_raster COMMAND test_esr_raster)
+
+    # -------------------------------------------------------------
+    # Benchmarks (not part of ctest: timings are machine dependent)
+    # -------------------------------------------------------------
+    add_executable(bench_esr_raster
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/03_pipeline_benchmark/bench_raster.cpp
+        ${CORE_SOURCES}
+    )
+    target_compile_options(bench_esr_raster PRIVATE -Wall -Wextra -O2)
+    target_link_libraries(bench_esr_raster PRIVATE m)
+
 else()
     include($ENV{IDF_PATH}/tools/cmake/project.cmake)
     project(ESR)
