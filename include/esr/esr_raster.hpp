@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #include "esr/esr_pipeline.hpp"
+#include "esr/esr_depth.hpp"
 
 namespace esr {
 
@@ -41,7 +42,7 @@ constexpr float ESR_RASTER_GUARD_BAND = 4194304.0f; // 2^22 px
 
 /**
  * Rasterize one screen-space triangle into the framebuffer with
- * linearly interpolated vertex colors.
+ * linearly interpolated vertex colors and optional 16-bit depth testing.
  *
  * Algorithm:
  *  - Vertices are snapped to 28.4 fixed point.
@@ -52,15 +53,24 @@ constexpr float ESR_RASTER_GUARD_BAND = 4194304.0f; // 2^22 px
  *  - Top-Left fill rule: a pixel center that lies exactly on an edge is
  *    covered only if that edge is a top or left edge. Triangles sharing an
  *    edge therefore never leave gaps and never draw a pixel twice.
- *  - Colors are stepped with per-triangle gradients (one reciprocal of the
+ *  - Colors and depth are stepped with per-triangle gradients (one reciprocal of the
  *    area per triangle).
+ *  - Early-Z: if a DepthBuffer is provided, depth comparison is evaluated before
+ *    pixel shading, immediately discarding hidden/occluded fragments.
  *
  * Both clockwise and counter-clockwise winding are accepted.
  * Degenerate (zero-area) triangles draw nothing.
  *
+ * @param tri         Screen-space triangle.
+ * @param fb          Target color framebuffer.
+ * @param db          Optional target 16-bit depth buffer (nullptr to disable depth testing).
+ * @param depth_func  Depth comparison function (defaults to DepthFunc::Less).
  * @return Number of pixels written.
  */
-int rasterize_triangle(const ScreenTriangle& tri, Framebuffer& fb);
+int rasterize_triangle(const ScreenTriangle& tri,
+                       Framebuffer& fb,
+                       DepthBuffer* db = nullptr,
+                       DepthFunc depth_func = DepthFunc::Less);
 
 } // namespace esr
 

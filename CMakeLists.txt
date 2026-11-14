@@ -64,6 +64,14 @@ if(ESR_BUILD_DESKTOP OR NOT DEFINED ENV{IDF_PATH})
     target_link_libraries(test_esr_mesh PRIVATE m)
     add_test(NAME test_esr_mesh COMMAND test_esr_mesh)
 
+    add_executable(test_esr_depth
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_esr_depth.cpp
+        ${CORE_SOURCES}
+    )
+    target_compile_options(test_esr_depth PRIVATE -Wall -Wextra -O2)
+    target_link_libraries(test_esr_depth PRIVATE m)
+    add_test(NAME test_esr_depth COMMAND test_esr_depth)
+
     # -------------------------------------------------------------
     # Benchmarks (not part of ctest: timings are machine dependent)
     # -------------------------------------------------------------

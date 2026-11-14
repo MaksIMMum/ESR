@@ -5,7 +5,9 @@ namespace esr {
 int draw_mesh(const Mesh3D& mesh,
               const Mat4& mvp,
               const Viewport& vp,
-              Framebuffer& fb) {
+              Framebuffer& fb,
+              DepthBuffer* db,
+              DepthFunc depth_func) {
     int total_pixels = 0;
 
     // Iterate through index buffer in triplets (each triplet = one triangle)
@@ -20,7 +22,7 @@ int draw_mesh(const Mesh3D& mesh,
 
         // Rasterize each produced screen triangle
         for (int t = 0; t < tri_count; ++t) {
-            total_pixels += rasterize_triangle(out_triangles[t], fb);
+            total_pixels += rasterize_triangle(out_triangles[t], fb, db, depth_func);
         }
     }
 

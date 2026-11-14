@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include "esr/esr_pipeline.hpp"
 #include "esr/esr_raster.hpp"
+#include "esr/esr_depth.hpp"
 
 namespace esr {
 
@@ -34,18 +35,22 @@ struct Mesh3D {
  *
  * Iterates through the index buffer in triplets, transforms each triangle
  * via the MVP matrix, clips against the near plane, and rasterizes into
- * the framebuffer.
+ * the framebuffer with optional Early-Z depth testing.
  *
- * @param mesh   Indexed mesh (vertices + indices in Flash/RODATA).
- * @param mvp    Model-View-Projection matrix.
- * @param vp     Viewport configuration.
- * @param fb     Target framebuffer for rasterization.
+ * @param mesh        Indexed mesh (vertices + indices in Flash/RODATA).
+ * @param mvp         Model-View-Projection matrix.
+ * @param vp          Viewport configuration.
+ * @param fb          Target framebuffer for rasterization.
+ * @param db          Optional target 16-bit depth buffer (nullptr to disable depth testing).
+ * @param depth_func  Depth comparison function (defaults to DepthFunc::Less).
  * @return Total number of pixels written across all triangles.
  */
 int draw_mesh(const Mesh3D& mesh,
               const Mat4& mvp,
               const Viewport& vp,
-              Framebuffer& fb);
+              Framebuffer& fb,
+              DepthBuffer* db = nullptr,
+              DepthFunc depth_func = DepthFunc::Less);
 
 } // namespace esr
 
