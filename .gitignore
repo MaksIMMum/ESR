@@ -47,6 +47,8 @@ managed_components/
 .idea/
 *.swp
 *~
+__pycache__/
+*.pyc
 
 # Output frame captures
 /*.ppm
