@@ -236,12 +236,108 @@ int walk(Framebuffer& fb, int minx, int miny, int maxx, int maxy, const Edge e[3
 
 } // namespace
 
+int rasterize_line(const ScreenVertex& v0,
+                   const ScreenVertex& v1,
+                   Framebuffer& fb,
+                   DepthBuffer* db,
+                   DepthFunc depth_func) {
+    if (fb.color == nullptr || fb.width <= 0 || fb.height <= 0) {
+        return 0;
+    }
+
+    if (!std::isfinite(v0.x) || !std::isfinite(v0.y) ||
+        !std::isfinite(v1.x) || !std::isfinite(v1.y)) {
+        return 0;
+    }
+
+    int x0 = static_cast<int>(std::floor(v0.x + 0.5f));
+    int y0 = static_cast<int>(std::floor(v0.y + 0.5f));
+    int x1 = static_cast<int>(std::floor(v1.x + 0.5f));
+    int y1 = static_cast<int>(std::floor(v1.y + 0.5f));
+
+    int dx = std::abs(x1 - x0);
+    int dy = std::abs(y1 - y0);
+    int sx = (x0 < x1) ? 1 : -1;
+    int sy = (y0 < y1) ? 1 : -1;
+    int err = dx - dy;
+
+    int steps = (dx > dy) ? dx : dy;
+    float inv_steps = (steps > 0) ? (1.0f / static_cast<float>(steps)) : 0.0f;
+
+    // Fixed-point color and depth interpolation
+    int32_t r = to_color_fixed(v0.color.x);
+    int32_t g = to_color_fixed(v0.color.y);
+    int32_t b = to_color_fixed(v0.color.z);
+    int32_t dr = to_color_fixed((v1.color.x - v0.color.x) * inv_steps);
+    int32_t dg = to_color_fixed((v1.color.y - v0.color.y) * inv_steps);
+    int32_t db_col = to_color_fixed((v1.color.z - v0.color.z) * inv_steps);
+
+    int32_t z = to_depth_fixed(v0.z);
+    int32_t dz = to_depth_gradient_fixed((v1.z - v0.z) * inv_steps);
+
+    int written = 0;
+    const bool has_depth = (db != nullptr && db->data != nullptr &&
+                            db->width == fb.width && db->height == fb.height);
+
+    while (true) {
+        if (x0 >= 0 && x0 < fb.width && y0 >= 0 && y0 < fb.height) {
+            bool pass = true;
+            if (has_depth) {
+                uint16_t frag_z = to_u16_depth(z);
+                uint16_t* dp = db->data + (y0 * db->width + x0);
+                if (eval_depth_test(frag_z, *dp, depth_func)) {
+                    *dp = frag_z;
+                } else {
+                    pass = false;
+                }
+            }
+
+            if (pass) {
+                uint8_t* p = fb.color + (y0 * fb.width + x0) * 3;
+                p[0] = to_u8(r);
+                p[1] = to_u8(g);
+                p[2] = to_u8(b);
+                ++written;
+            }
+        }
+
+        if (x0 == x1 && y0 == y1) break;
+
+        int e2 = 2 * err;
+        if (e2 > -dy) {
+            err -= dy;
+            x0 += sx;
+        }
+        if (e2 < dx) {
+            err += dx;
+            y0 += sy;
+        }
+
+        r += dr;
+        g += dg;
+        b += db_col;
+        z += dz;
+    }
+
+    return written;
+}
+
 int rasterize_triangle(const ScreenTriangle& tri,
                        Framebuffer& fb,
                        DepthBuffer* db,
-                       DepthFunc depth_func) {
+                       DepthFunc depth_func,
+                       PolygonMode polygon_mode) {
     if (fb.color == nullptr || fb.width <= 0 || fb.height <= 0) {
         return 0;
+    }
+
+    // Wireframe polygon mode: rasterize 3 edges with Bresenham line algorithm
+    if (polygon_mode == PolygonMode::Wireframe) {
+        int w = 0;
+        w += rasterize_line(tri.v[0], tri.v[1], fb, db, depth_func);
+        w += rasterize_line(tri.v[1], tri.v[2], fb, db, depth_func);
+        w += rasterize_line(tri.v[2], tri.v[0], fb, db, depth_func);
+        return w;
     }
 
     for (int i = 0; i < 3; ++i) {

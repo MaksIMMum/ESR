@@ -67,10 +67,28 @@ constexpr float ESR_RASTER_GUARD_BAND = 4194304.0f; // 2^22 px
  * @param depth_func  Depth comparison function (defaults to DepthFunc::Less).
  * @return Number of pixels written.
  */
+/**
+ * Rasterize a 2D screen-space line between two vertices using Bresenham's integer line algorithm.
+ * Linearly interpolates RGB vertex colors and depth.
+ *
+ * @param v0          Start vertex.
+ * @param v1          End vertex.
+ * @param fb          Target color framebuffer.
+ * @param db          Optional target 16-bit depth buffer (nullptr to disable depth testing).
+ * @param depth_func  Depth comparison function (defaults to DepthFunc::Less).
+ * @return Number of pixels written.
+ */
+int rasterize_line(const ScreenVertex& v0,
+                   const ScreenVertex& v1,
+                   Framebuffer& fb,
+                   DepthBuffer* db = nullptr,
+                   DepthFunc depth_func = DepthFunc::Less);
+
 int rasterize_triangle(const ScreenTriangle& tri,
                        Framebuffer& fb,
                        DepthBuffer* db = nullptr,
-                       DepthFunc depth_func = DepthFunc::Less);
+                       DepthFunc depth_func = DepthFunc::Less,
+                       PolygonMode polygon_mode = PolygonMode::Fill);
 
 } // namespace esr
 
