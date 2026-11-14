@@ -1,4 +1,5 @@
 #include "esr/esr_raster.hpp"
+#include "esr/esr_depth.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -56,6 +57,33 @@ inline uint8_t to_u8(int32_t v) {
 }
 
 /**
+ * 16-bit depth buffer values are in [0, 65535].
+ * Stepped in 16.15 fixed point so depth values and gradients fit in signed int32_t.
+ * 65535 * 32768 = 2,147,450,880 <= INT32_MAX (2,147,483,647).
+ */
+constexpr float DEPTH_SCALE = 65535.0f * 32768.0f;
+
+inline uint16_t to_u16_depth(int32_t v) {
+    if (v <= 0) return 0;
+    if (v >= 2147450880) return 65535;
+    return static_cast<uint16_t>((v + (1 << 14)) >> 15);
+}
+
+inline int32_t to_depth_fixed(float v) {
+    const float s = v * DEPTH_SCALE;
+    if (s > 2147450880.0f) return 2147450880;
+    if (s < 0.0f) return 0;
+    return static_cast<int32_t>(std::floor(s + 0.5f));
+}
+
+inline int32_t to_depth_gradient_fixed(float v) {
+    const float s = v * DEPTH_SCALE;
+    if (s > 1.0e9f) return 1000000000;
+    if (s < -1.0e9f) return -1000000000;
+    return static_cast<int32_t>(std::floor(s + 0.5f));
+}
+
+/**
  * One Pineda edge function E(p) = (p.x - a.x) * (b.y - a.y) - (p.y - a.y) * (b.x - a.x),
  * stored as its value at the first pixel center of the AABB plus per-pixel steps.
  */
@@ -92,8 +120,6 @@ inline Edge make_edge(int32_t ax, int32_t ay, int32_t bx, int32_t by, int64_t px
 
 /** True if every value the inner loops will produce for this edge fits in int32. */
 inline bool fits_int32(const Edge& e, int span_x, int span_y) {
-    // E is linear, so its extremes over the visited region are at the corners.
-    // The loops step one past the last column/row, hence span + 1 = count.
     const int64_t c[4] = {
         e.biased,
         e.biased + e.step_x * span_x,
@@ -114,12 +140,22 @@ struct ColorSetup {
     int32_t drdy, dgdy, dbdy; // Per-pixel step in y
 };
 
+struct DepthSetup {
+    DepthBuffer* db = nullptr;
+    DepthFunc func = DepthFunc::Less;
+    int32_t z = 0;          // 16.15 depth at the AABB origin pixel center
+    int32_t dzdx = 0;       // Per-pixel depth step in x
+    int32_t dzdy = 0;       // Per-pixel depth step in y
+};
+
 /**
  * Walk the AABB. T is int32_t (fast path) or int64_t (huge triangles).
- * Per pixel: 3 integer adds + 1 sign test for coverage, 3 integer adds for color.
+ * HasDepth enables zero-overhead compile-time elimination of depth testing when false.
+ * Per pixel: 3 integer adds + 1 sign test for coverage, 3 integer adds for color,
+ * and 1 integer add + Early-Z test when depth testing is active.
  */
-template <typename T>
-int walk(Framebuffer& fb, int minx, int miny, int maxx, int maxy, const Edge e[3], const ColorSetup& c) {
+template <typename T, bool HasDepth>
+int walk(Framebuffer& fb, int minx, int miny, int maxx, int maxy, const Edge e[3], const ColorSetup& c, const DepthSetup& d) {
     const T sx0 = static_cast<T>(e[0].step_x);
     const T sx1 = static_cast<T>(e[1].step_x);
     const T sx2 = static_cast<T>(e[2].step_x);
@@ -131,43 +167,79 @@ int walk(Framebuffer& fb, int minx, int miny, int maxx, int maxy, const Edge e[3
     T row1 = static_cast<T>(e[1].biased);
     T row2 = static_cast<T>(e[2].biased);
     int32_t row_r = c.r, row_g = c.g, row_b = c.b;
+    int32_t row_z = d.z;
 
     const int pitch = fb.width * 3;
     uint8_t* row_ptr = fb.color + (static_cast<long>(miny) * fb.width + minx) * 3;
+
+    uint16_t* depth_row_ptr = nullptr;
+    int depth_pitch = 0;
+    if constexpr (HasDepth) {
+        depth_pitch = d.db->width;
+        depth_row_ptr = d.db->data + (static_cast<long>(miny) * d.db->width + minx);
+    }
+
     int written = 0;
 
     for (int y = miny; y <= maxy; ++y) {
         T w0 = row0, w1 = row1, w2 = row2;
         int32_t r = row_r, g = row_g, b = row_b;
+        int32_t z = row_z;
         uint8_t* p = row_ptr;
+        uint16_t* dp = depth_row_ptr;
         bool entered = false;
 
         for (int x = minx; x <= maxx; ++x) {
             // Inside <=> all three biased edge values are >= 0 (sign bits clear).
             if ((w0 | w1 | w2) >= 0) {
-                p[0] = to_u8(r);
-                p[1] = to_u8(g);
-                p[2] = to_u8(b);
-                ++written;
                 entered = true;
+
+                // Early-Z test: compare incoming fragment depth against depth buffer.
+                if constexpr (HasDepth) {
+                    const uint16_t frag_z = to_u16_depth(z);
+                    if (eval_depth_test(frag_z, *dp, d.func)) {
+                        *dp = frag_z; // Pass: update depth buffer
+                        p[0] = to_u8(r);
+                        p[1] = to_u8(g);
+                        p[2] = to_u8(b);
+                        ++written;
+                    }
+                } else {
+                    p[0] = to_u8(r);
+                    p[1] = to_u8(g);
+                    p[2] = to_u8(b);
+                    ++written;
+                }
             } else if (entered) {
                 break; // Triangle is convex: the span on this row has ended.
             }
+
             w0 += sx0; w1 += sx1; w2 += sx2;
             r += c.drdx; g += c.dgdx; b += c.dbdx;
+            if constexpr (HasDepth) {
+                z += d.dzdx;
+                ++dp;
+            }
             p += 3;
         }
 
         row0 += sy0; row1 += sy1; row2 += sy2;
         row_r += c.drdy; row_g += c.dgdy; row_b += c.dbdy;
         row_ptr += pitch;
+        if constexpr (HasDepth) {
+            row_z += d.dzdy;
+            depth_row_ptr += depth_pitch;
+        }
     }
     return written;
 }
 
 } // namespace
 
-int rasterize_triangle(const ScreenTriangle& tri, Framebuffer& fb) {
+int rasterize_triangle(const ScreenTriangle& tri,
+                       Framebuffer& fb,
+                       DepthBuffer* db,
+                       DepthFunc depth_func) {
     if (fb.color == nullptr || fb.width <= 0 || fb.height <= 0) {
         return 0;
     }
@@ -183,10 +255,12 @@ int rasterize_triangle(const ScreenTriangle& tri, Framebuffer& fb) {
     // 1. Snap to 28.4 fixed point.
     int32_t X[3], Y[3];
     const Vec3* col[3];
+    float Z[3];
     for (int i = 0; i < 3; ++i) {
         X[i] = to_fixed(tri.v[i].x);
         Y[i] = to_fixed(tri.v[i].y);
         col[i] = &tri.v[i].color;
+        Z[i] = tri.v[i].z;
     }
 
     // 2. Signed doubled area; normalize winding so the interior is E > 0.
@@ -200,6 +274,7 @@ int rasterize_triangle(const ScreenTriangle& tri, Framebuffer& fb) {
         t = X[1]; X[1] = X[2]; X[2] = t;
         t = Y[1]; Y[1] = Y[2]; Y[2] = t;
         const Vec3* tc = col[1]; col[1] = col[2]; col[2] = tc;
+        float tz = Z[1]; Z[1] = Z[2]; Z[2] = tz;
         area = -area;
     }
 
@@ -227,7 +302,7 @@ int rasterize_triangle(const ScreenTriangle& tri, Framebuffer& fb) {
         make_edge(X[0], Y[0], X[1], Y[1], px, py),
     };
 
-    // 5. Color gradients: one reciprocal per triangle instead of three divisions per pixel.
+    // 5. Color & depth gradients: one reciprocal per triangle instead of per-pixel divisions.
     const float inv_area = 1.0f / static_cast<float>(area);
     const float w0 = static_cast<float>(e[0].raw) * inv_area;
     const float w1 = static_cast<float>(e[1].raw) * inv_area;
@@ -250,15 +325,39 @@ int rasterize_triangle(const ScreenTriangle& tri, Framebuffer& fb) {
     c.dgdy = to_color_fixed(dy0 * col[0]->y + dy1 * col[1]->y + dy2 * col[2]->y);
     c.dbdy = to_color_fixed(dy0 * col[0]->z + dy1 * col[1]->z + dy2 * col[2]->z);
 
+    DepthSetup d;
+    const bool has_depth = (db != nullptr && db->data != nullptr &&
+                            db->width == fb.width && db->height == fb.height);
+    if (has_depth) {
+        d.db = db;
+        d.func = depth_func;
+        const float z0 = w0 * Z[0] + w1 * Z[1] + w2 * Z[2];
+        const float dz_dx = dx0 * Z[0] + dx1 * Z[1] + dx2 * Z[2];
+        const float dz_dy = dy0 * Z[0] + dy1 * Z[1] + dy2 * Z[2];
+        d.z = to_depth_fixed(z0);
+        d.dzdx = to_depth_gradient_fixed(dz_dx);
+        d.dzdy = to_depth_gradient_fixed(dz_dy);
+    }
+
     // 6. Walk the box. 32-bit accumulators whenever they cannot overflow
     //    (always true for normal on-screen geometry), 64-bit otherwise.
     const int span_x = maxx - minx + 1;
     const int span_y = maxy - miny + 1;
-    if (fits_int32(e[0], span_x, span_y) && fits_int32(e[1], span_x, span_y) &&
-        fits_int32(e[2], span_x, span_y)) {
-        return walk<int32_t>(fb, minx, miny, maxx, maxy, e, c);
+    const bool fits_32 = fits_int32(e[0], span_x, span_y) &&
+                         fits_int32(e[1], span_x, span_y) &&
+                         fits_int32(e[2], span_x, span_y);
+
+    if (has_depth) {
+        if (fits_32) {
+            return walk<int32_t, true>(fb, minx, miny, maxx, maxy, e, c, d);
+        }
+        return walk<int64_t, true>(fb, minx, miny, maxx, maxy, e, c, d);
+    } else {
+        if (fits_32) {
+            return walk<int32_t, false>(fb, minx, miny, maxx, maxy, e, c, d);
+        }
+        return walk<int64_t, false>(fb, minx, miny, maxx, maxy, e, c, d);
     }
-    return walk<int64_t>(fb, minx, miny, maxx, maxy, e, c);
 }
 
 } // namespace esr
