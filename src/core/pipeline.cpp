@@ -124,7 +124,9 @@ int process_triangle(const Vertex3D& v0,
                      const Vertex3D& v2,
                      const Mat4& mvp,
                      const Viewport& vp,
-                     ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES]) {
+                     ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
+                     CullMode cull_mode,
+                     WindingOrder front_face) {
     // 1. MVP transformation (Object Space -> Clip Space)
     ClipTriangle clip_tri;
     clip_tri.v[0] = transform_mvp(v0, mvp);
@@ -153,6 +155,13 @@ int process_triangle(const Vertex3D& v0,
         }
 
         if (ok) {
+            // 5. Backface / Frontface culling (screen space 2D cross product)
+            if (cull_mode != CullMode::None) {
+                const float area = screen_triangle_signed_area(screen_tri.v[0], screen_tri.v[1], screen_tri.v[2]);
+                if (is_triangle_culled(area, cull_mode, front_face)) {
+                    continue; // Culled before rasterization!
+                }
+            }
             out_triangles[out_count++] = screen_tri;
         }
     }

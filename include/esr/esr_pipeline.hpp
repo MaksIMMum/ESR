@@ -2,6 +2,7 @@
 #define ESR_PIPELINE_HPP
 
 #include "esr/esr_math.h"
+#include "esr/esr_depth.hpp"
 
 namespace esr {
 
@@ -62,6 +63,102 @@ struct Viewport {
     float min_depth = 0.0f;
     float max_depth = 1.0f;
 };
+
+/* ------------------------------------------------------------------ */
+/* Pipeline States & Modes (REQ-5)                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Triangle face culling modes.
+ */
+enum class CullMode : uint8_t {
+    None = 0,   // No triangles culled (render both front and back faces)
+    Back = 1,   // Cull back-facing triangles (standard optimization)
+    Front = 2,  // Cull front-facing triangles
+    CW = 3,     // Cull clockwise screen triangles
+    CCW = 4     // Cull counter-clockwise screen triangles
+};
+
+constexpr CullMode CULL_NONE  = CullMode::None;
+constexpr CullMode CULL_BACK  = CullMode::Back;
+constexpr CullMode CULL_FRONT = CullMode::Front;
+constexpr CullMode CULL_CW    = CullMode::CW;
+constexpr CullMode CULL_CCW   = CullMode::CCW;
+
+/**
+ * Vertex winding order convention for determining front-facing polygons.
+ */
+enum class WindingOrder : uint8_t {
+    CCW = 0,    // Counter-Clockwise is front-facing (standard OpenGL default)
+    CW = 1      // Clockwise is front-facing
+};
+
+constexpr WindingOrder WINDING_CCW = WindingOrder::CCW;
+constexpr WindingOrder WINDING_CW  = WindingOrder::CW;
+
+/**
+ * Polygon rasterization mode.
+ */
+enum class PolygonMode : uint8_t {
+    Fill = 0,       // Solid fill (AABB + Pineda)
+    Wireframe = 1   // Edge outlines only (Bresenham line rasterizer)
+};
+
+constexpr PolygonMode POLYGON_MODE_FILL      = PolygonMode::Fill;
+constexpr PolygonMode POLYGON_MODE_WIREFRAME = PolygonMode::Wireframe;
+
+/**
+ * Global pipeline configuration state.
+ */
+struct PipelineState {
+    CullMode cull_mode = CullMode::None;
+    WindingOrder front_face = WindingOrder::CCW;
+    PolygonMode polygon_mode = PolygonMode::Fill;
+    DepthFunc depth_func = DepthFunc::Less;
+};
+
+/**
+ * Compute the 2D screen-space signed area (cross product of edges v0->v1 and v0->v2).
+ *
+ * In screen coordinates (where Y points down):
+ *   signed_area < 0 -> Counter-Clockwise (CCW)
+ *   signed_area > 0 -> Clockwise (CW)
+ *   signed_area == 0 -> Degenerate / Collinear (edge-on)
+ */
+inline float screen_triangle_signed_area(const ScreenVertex& v0,
+                                         const ScreenVertex& v1,
+                                         const ScreenVertex& v2) {
+    return (v1.x - v0.x) * (v2.y - v0.y) - (v1.y - v0.y) * (v2.x - v0.x);
+}
+
+/**
+ * Check whether a triangle should be culled according to culling mode and winding convention.
+ */
+inline bool is_triangle_culled(float signed_area,
+                               CullMode cull_mode,
+                               WindingOrder front_face = WindingOrder::CCW) {
+    if (cull_mode == CullMode::None) {
+        return false;
+    }
+    if (signed_area == 0.0f) {
+        return true;
+    }
+    const bool is_ccw = (signed_area < 0.0f);
+    if (cull_mode == CullMode::CCW) {
+        return is_ccw;
+    }
+    if (cull_mode == CullMode::CW) {
+        return !is_ccw;
+    }
+    const bool is_front = (front_face == WindingOrder::CCW) ? is_ccw : !is_ccw;
+    if (cull_mode == CullMode::Back) {
+        return !is_front;
+    }
+    if (cull_mode == CullMode::Front) {
+        return is_front;
+    }
+    return false;
+}
 
 /* ------------------------------------------------------------------ */
 /* Pipeline Transformation Functions                                   */
@@ -130,7 +227,9 @@ int process_triangle(const Vertex3D& v0,
                      const Vertex3D& v2,
                      const Mat4& mvp,
                      const Viewport& vp,
-                     ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES]);
+                     ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
+                     CullMode cull_mode = CullMode::None,
+                     WindingOrder front_face = WindingOrder::CCW);
 
 } // namespace esr
 

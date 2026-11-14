@@ -49,8 +49,19 @@ int draw_mesh(const Mesh3D& mesh,
               const Mat4& mvp,
               const Viewport& vp,
               Framebuffer& fb,
-              DepthBuffer* db = nullptr,
-              DepthFunc depth_func = DepthFunc::Less);
+              DepthBuffer* db,
+              const PipelineState& state);
+
+inline int draw_mesh(const Mesh3D& mesh,
+                     const Mat4& mvp,
+                     const Viewport& vp,
+                     Framebuffer& fb,
+                     DepthBuffer* db = nullptr,
+                     DepthFunc depth_func = DepthFunc::Less) {
+    PipelineState state;
+    state.depth_func = depth_func;
+    return draw_mesh(mesh, mvp, vp, fb, db, state);
+}
 
 } // namespace esr
 
