@@ -45,12 +45,15 @@ struct Mesh3D {
  * @param depth_func  Depth comparison function (defaults to DepthFunc::Less).
  * @return Total number of pixels written across all triangles.
  */
+class Profiler;
+
 int draw_mesh(const Mesh3D& mesh,
               const Mat4& mvp,
               const Viewport& vp,
               Framebuffer& fb,
               DepthBuffer* db,
-              const PipelineState& state);
+              const PipelineState& state,
+              Profiler* profiler = nullptr);
 
 inline int draw_mesh(const Mesh3D& mesh,
                      const Mat4& mvp,
