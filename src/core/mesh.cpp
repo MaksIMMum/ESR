@@ -9,6 +9,7 @@ int draw_mesh(const Mesh3D& mesh,
               DepthBuffer* db,
               const PipelineState& state) {
     int total_pixels = 0;
+    const void* uniforms = state.uniforms ? state.uniforms : &mvp;
 
     // Iterate through index buffer in triplets (each triplet = one triangle)
     for (uint32_t i = 0; i + 2 < mesh.index_count; i += 3) {
@@ -16,15 +17,23 @@ int draw_mesh(const Mesh3D& mesh,
         const Vertex3D& v1 = mesh.vertices[mesh.indices[i + 1]];
         const Vertex3D& v2 = mesh.vertices[mesh.indices[i + 2]];
 
-        // Full geometry pipeline: MVP -> clip -> perspective divide -> viewport -> culling
+        // Full geometry pipeline: VertexShader/MVP -> clip -> perspective divide -> viewport -> culling
         ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES];
-        int tri_count = process_triangle(v0, v1, v2, mvp, vp, out_triangles,
-                                         state.cull_mode, state.front_face);
+        int tri_count = 0;
 
-        // Rasterize each produced screen triangle (fill or wireframe)
+        if (state.vertex_shader) {
+            tri_count = process_triangle(&v0, &v1, &v2, state.vertex_shader, uniforms,
+                                         vp, out_triangles, state.cull_mode, state.front_face);
+        } else {
+            tri_count = process_triangle(v0, v1, v2, mvp, vp, out_triangles,
+                                         state.cull_mode, state.front_face);
+        }
+
+        // Rasterize each produced screen triangle (fill or wireframe, with optional pixel shader)
         for (int t = 0; t < tri_count; ++t) {
             total_pixels += rasterize_triangle(out_triangles[t], fb, db,
-                                               state.depth_func, state.polygon_mode);
+                                               state.depth_func, state.polygon_mode,
+                                               state.pixel_shader, uniforms);
         }
     }
 

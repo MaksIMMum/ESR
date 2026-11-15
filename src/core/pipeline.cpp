@@ -8,6 +8,10 @@ ClipVertex transform_mvp(const Vertex3D& vertex, const Mat4& mvp) {
     ClipVertex out;
     out.position = mat4_mul_vec4(mvp, pos4);
     out.color = vertex.color;
+    out.varyings[0] = vertex.color.x;
+    out.varyings[1] = vertex.color.y;
+    out.varyings[2] = vertex.color.z;
+    out.varying_count = 3;
     return out;
 }
 
@@ -43,6 +47,10 @@ static inline ClipVertex lerp_clip_vertex(const ClipVertex& a, const ClipVertex&
     r.color.x = a.color.x + (b.color.x - a.color.x) * t;
     r.color.y = a.color.y + (b.color.y - a.color.y) * t;
     r.color.z = a.color.z + (b.color.z - a.color.z) * t;
+    r.varying_count = a.varying_count;
+    for (uint8_t i = 0; i < a.varying_count; ++i) {
+        r.varyings[i] = a.varyings[i] + (b.varyings[i] - a.varyings[i]) * t;
+    }
     return r;
 }
 
@@ -101,7 +109,8 @@ int clip_triangle_near(const ClipTriangle& in, ClipTriangle out[ESR_MAX_CLIPPED_
 /* Viewport                                                             */
 /* ------------------------------------------------------------------ */
 
-ScreenVertex viewport_transform(const Vec3& ndc, float inv_w, const Vec3& color, const Viewport& vp) {
+ScreenVertex viewport_transform(const Vec3& ndc, float inv_w, const Vec3& color, const Viewport& vp,
+                                const float* varyings, uint8_t varying_count) {
     ScreenVertex out;
 
     // Map NDC X [-1, 1] -> [vp.x, vp.x + vp.width]
@@ -116,24 +125,45 @@ ScreenVertex viewport_transform(const Vec3& ndc, float inv_w, const Vec3& color,
 
     out.inv_w = inv_w;
     out.color = color;
+    out.varying_count = varying_count;
+    if (varyings && varying_count > 0) {
+        for (uint8_t i = 0; i < varying_count; ++i) {
+            out.varyings[i] = varyings[i];
+        }
+    }
     return out;
 }
 
-int process_triangle(const Vertex3D& v0,
-                     const Vertex3D& v1,
-                     const Vertex3D& v2,
-                     const Mat4& mvp,
+int process_triangle(const void* v0,
+                     const void* v1,
+                     const void* v2,
+                     VertexShader vs,
+                     const void* uniforms,
                      const Viewport& vp,
                      ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
                      CullMode cull_mode,
                      WindingOrder front_face) {
-    // 1. MVP transformation (Object Space -> Clip Space)
-    ClipTriangle clip_tri;
-    clip_tri.v[0] = transform_mvp(v0, mvp);
-    clip_tri.v[1] = transform_mvp(v1, mvp);
-    clip_tri.v[2] = transform_mvp(v2, mvp);
+    // 1. Programmable Vertex Shader transformation
+    VertexOut vo[3];
+    vs(v0, &vo[0], uniforms);
+    vs(v1, &vo[1], uniforms);
+    vs(v2, &vo[2], uniforms);
 
-    // 2. Near-plane clipping (still in Clip Space, before any division)
+    ClipTriangle clip_tri;
+    for (int i = 0; i < 3; ++i) {
+        clip_tri.v[i].position = vo[i].clip_pos;
+        clip_tri.v[i].varying_count = vo[i].varyings.count;
+        for (uint8_t k = 0; k < vo[i].varyings.count; ++k) {
+            clip_tri.v[i].varyings[k] = vo[i].varyings.data[k];
+        }
+        if (vo[i].varyings.count >= 3) {
+            clip_tri.v[i].color = Vec3{vo[i].varyings.data[0], vo[i].varyings.data[1], vo[i].varyings.data[2]};
+        } else {
+            clip_tri.v[i].color = Vec3{1.0f, 1.0f, 1.0f};
+        }
+    }
+
+    // 2. Near-plane clipping (Clip Space, before any division)
     ClipTriangle clipped[ESR_MAX_CLIPPED_TRIANGLES];
     const int clipped_count = clip_triangle_near(clip_tri, clipped);
 
@@ -150,7 +180,8 @@ int process_triangle(const Vertex3D& v0,
 
             // 4. Viewport transformation (NDC -> Framebuffer Pixels)
             if (ok) {
-                screen_tri.v[i] = viewport_transform(ndc, inv_w, clipped[t].v[i].color, vp);
+                screen_tri.v[i] = viewport_transform(ndc, inv_w, clipped[t].v[i].color, vp,
+                                                     clipped[t].v[i].varyings, clipped[t].v[i].varying_count);
             }
         }
 
@@ -167,6 +198,18 @@ int process_triangle(const Vertex3D& v0,
     }
 
     return out_count;
+}
+
+int process_triangle(const Vertex3D& v0,
+                     const Vertex3D& v1,
+                     const Vertex3D& v2,
+                     const Mat4& mvp,
+                     const Viewport& vp,
+                     ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
+                     CullMode cull_mode,
+                     WindingOrder front_face) {
+    return process_triangle(&v0, &v1, &v2, default_vertex_shader, &mvp, vp,
+                            out_triangles, cull_mode, front_face);
 }
 
 } // namespace esr

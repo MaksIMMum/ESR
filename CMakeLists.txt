@@ -80,6 +80,14 @@ if(ESR_BUILD_DESKTOP OR NOT DEFINED ENV{IDF_PATH})
     target_link_libraries(test_esr_culling PRIVATE m)
     add_test(NAME test_esr_culling COMMAND test_esr_culling)
 
+    add_executable(test_esr_shader
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_esr_shader.cpp
+        ${CORE_SOURCES}
+    )
+    target_compile_options(test_esr_shader PRIVATE -Wall -Wextra -O2)
+    target_link_libraries(test_esr_shader PRIVATE m)
+    add_test(NAME test_esr_shader COMMAND test_esr_shader)
+
     # -------------------------------------------------------------
     # Benchmarks (not part of ctest: timings are machine dependent)
     # -------------------------------------------------------------

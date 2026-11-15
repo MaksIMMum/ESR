@@ -3,6 +3,7 @@
 
 #include "esr/esr_math.h"
 #include "esr/esr_depth.hpp"
+#include "esr/esr_shader.hpp"
 
 namespace esr {
 
@@ -25,6 +26,8 @@ struct Vertex3D {
 struct ClipVertex {
     Vec4 position;
     Vec3 color;
+    float varyings[ESR_MAX_VARYINGS] = {0.0f};
+    uint8_t varying_count = 0;
 };
 
 /**
@@ -38,11 +41,13 @@ struct ClipTriangle {
  * Vertex transformed into screen / viewport coordinates.
  */
 struct ScreenVertex {
-    float x;      // Framebuffer pixel X coordinate [0.0, width]
-    float y;      // Framebuffer pixel Y coordinate [0.0, height]
-    float z;      // Normalized depth [0.0, 1.0] for Z-buffer
-    float inv_w;  // 1.0f / w, required for perspective-correct interpolation
-    Vec3 color;   // Vertex color attribute
+    float x = 0.0f;     // Framebuffer pixel X coordinate [0.0, width]
+    float y = 0.0f;     // Framebuffer pixel Y coordinate [0.0, height]
+    float z = 0.0f;     // Normalized depth [0.0, 1.0] for Z-buffer
+    float inv_w = 0.0f; // 1.0f / w, required for perspective-correct interpolation
+    Vec3 color = {0.0f, 0.0f, 0.0f};  // Vertex color attribute
+    float varyings[ESR_MAX_VARYINGS] = {0.0f};
+    uint8_t varying_count = 0;
 };
 
 /**
@@ -115,7 +120,19 @@ struct PipelineState {
     WindingOrder front_face = WindingOrder::CCW;
     PolygonMode polygon_mode = PolygonMode::Fill;
     DepthFunc depth_func = DepthFunc::Less;
+
+    // --- Shader Callback Pipeline (REQ-1) ---
+    VertexShader vertex_shader = nullptr; // nullptr = default MVP transformation
+    PixelShader  pixel_shader  = nullptr; // nullptr = default fast Gouraud fill
+    const void*  uniforms      = nullptr; // Uniform buffer binding pointer
 };
+
+/**
+ * Bind uniform buffer data to pipeline state.
+ */
+inline void esr_set_uniforms(PipelineState& state, const void* uniforms) {
+    state.uniforms = uniforms;
+}
 
 /**
  * Compute the 2D screen-space signed area (cross product of edges v0->v1 and v0->v2).
@@ -212,20 +229,35 @@ bool perspective_divide(const ClipVertex& clip, Vec3& out_ndc, float& out_inv_w)
  * Map Normalized Device Coordinates (NDC) to 2D screen/framebuffer pixel space.
  * Inverts the Y-axis so NDC +1 (top) maps to screen row 0.
  */
-ScreenVertex viewport_transform(const Vec3& ndc, float inv_w, const Vec3& color, const Viewport& vp);
+ScreenVertex viewport_transform(const Vec3& ndc, float inv_w, const Vec3& color, const Viewport& vp,
+                                const float* varyings = nullptr, uint8_t varying_count = 0);
 
 /**
  * Full geometry stage for one triangle:
- *   MVP -> Near-plane clipping -> Perspective Divide -> Viewport.
+ *   MVP -> Near-plane clipping -> Perspective Divide -> Viewport -> Culling.
  *
  * @param out_triangles Output array with room for ESR_MAX_CLIPPED_TRIANGLES triangles.
  * @return Number of screen triangles written (0 if the triangle is fully behind
- *         the near plane or degenerate, otherwise 1 or 2).
+ *         the near plane, degenerate, or culled, otherwise 1 or 2).
  */
 int process_triangle(const Vertex3D& v0,
                      const Vertex3D& v1,
                      const Vertex3D& v2,
                      const Mat4& mvp,
+                     const Viewport& vp,
+                     ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
+                     CullMode cull_mode = CullMode::None,
+                     WindingOrder front_face = WindingOrder::CCW);
+
+/**
+ * Programmable geometry stage for one triangle using a Vertex Shader callback:
+ *   VertexShader -> Near-plane clipping -> Perspective Divide -> Viewport -> Culling.
+ */
+int process_triangle(const void* v0,
+                     const void* v1,
+                     const void* v2,
+                     VertexShader vs,
+                     const void* uniforms,
                      const Viewport& vp,
                      ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
                      CullMode cull_mode = CullMode::None,
