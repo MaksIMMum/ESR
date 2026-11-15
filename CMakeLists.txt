@@ -19,12 +19,10 @@ if(ESR_BUILD_DESKTOP OR NOT DEFINED ENV{IDF_PATH})
         ${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp
     )
 
-    file(GLOB DESKTOP_SOURCES
-        ${CMAKE_CURRENT_SOURCE_DIR}/platform/desktop/*.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/platform/desktop/*.cpp
+    add_executable(esr_desktop
+        ${CMAKE_CURRENT_SOURCE_DIR}/platform/desktop/main.cpp
+        ${CORE_SOURCES}
     )
-
-    add_executable(esr_desktop ${DESKTOP_SOURCES} ${CORE_SOURCES})
     target_compile_options(esr_desktop PRIVATE -Wall -Wextra -O2)
     target_link_libraries(esr_desktop PRIVATE m)
 
@@ -88,6 +86,14 @@ if(ESR_BUILD_DESKTOP OR NOT DEFINED ENV{IDF_PATH})
     target_link_libraries(test_esr_shader PRIVATE m)
     add_test(NAME test_esr_shader COMMAND test_esr_shader)
 
+    add_executable(test_esr_profiler
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_esr_profiler.cpp
+        ${CORE_SOURCES}
+    )
+    target_compile_options(test_esr_profiler PRIVATE -Wall -Wextra -O2)
+    target_link_libraries(test_esr_profiler PRIVATE m)
+    add_test(NAME test_esr_profiler COMMAND test_esr_profiler)
+
     # -------------------------------------------------------------
     # Benchmarks (not part of ctest: timings are machine dependent)
     # -------------------------------------------------------------
@@ -97,6 +103,21 @@ if(ESR_BUILD_DESKTOP OR NOT DEFINED ENV{IDF_PATH})
     )
     target_compile_options(bench_esr_raster PRIVATE -Wall -Wextra -O2)
     target_link_libraries(bench_esr_raster PRIVATE m)
+
+    # -------------------------------------------------------------
+    # Interactive Desktop 3D Live Viewer with Real-Time HUD
+    # -------------------------------------------------------------
+    find_package(SDL2 QUIET)
+    if(SDL2_FOUND)
+        message(STATUS "Found SDL2 - Building interactive viewer target 'esr_viewer'...")
+        add_executable(esr_viewer
+            ${CMAKE_CURRENT_SOURCE_DIR}/platform/desktop/viewer.cpp
+            ${CORE_SOURCES}
+        )
+        target_include_directories(esr_viewer PRIVATE ${SDL2_INCLUDE_DIRS})
+        target_compile_options(esr_viewer PRIVATE -Wall -Wextra -O2)
+        target_link_libraries(esr_viewer PRIVATE ${SDL2_LIBRARIES} m)
+    endif()
 
 else()
     include($ENV{IDF_PATH}/tools/cmake/project.cmake)
