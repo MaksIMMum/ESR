@@ -82,19 +82,32 @@ int main(int argc, char** argv) {
     bool headless = false;
     bool vsync = false;
     int max_frames = -1;
+    int render_w = RENDER_W;
+    int render_h = RENDER_H;
+    int window_scale = WINDOW_SCALE;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--headless") == 0) headless = true;
         else if (strcmp(argv[i], "--vsync") == 0) vsync = true;
-        else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
+        else if (strcmp(argv[i], "--esp32-screen") == 0 || strcmp(argv[i], "--240x320") == 0) {
+            render_w = 240;
+            render_h = 320;
+            window_scale = 2; // 480 x 640 window
+        } else if (strcmp(argv[i], "--res") == 0 && i + 2 < argc) {
+            render_w = atoi(argv[++i]);
+            render_h = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             max_frames = atoi(argv[++i]);
         }
     }
 
+    const int window_w = render_w * window_scale;
+    const int window_h = render_h * window_scale;
+
     printf("=====================================================\n");
     printf("   ESR Interactive Real-Time 3D Viewer & Profiler     \n");
     printf("   Render resolution: %dx%d (Window: %dx%d)          \n",
-           RENDER_W, RENDER_H, WINDOW_W, WINDOW_H);
+           render_w, render_h, window_w, window_h);
     printf("   Controls:                                         \n");
     printf("     [SPACE]   : Toggle rotation                     \n");
     printf("     [W]       : Toggle Wireframe / Solid Fill       \n");
@@ -105,6 +118,8 @@ int main(int argc, char** argv) {
     printf("     [H]       : Toggle Profiler HUD Overlay         \n");
     printf("     [Drag]    : Orbit camera with mouse             \n");
     printf("     [ESC]/[Q] : Exit                                \n");
+    printf("   Options:                                          \n");
+    printf("     --esp32-screen / --240x320 : Native ST7789 display resolution\n");
     printf("=====================================================\n\n");
 
     SDL_Window* window = nullptr;
@@ -118,7 +133,7 @@ int main(int argc, char** argv) {
         } else {
             window = SDL_CreateWindow("ESR - Embedded Software Rasterizer [Real-Time Profiler]",
                                       SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                      WINDOW_W, WINDOW_H, SDL_WINDOW_SHOWN);
+                                      window_w, window_h, SDL_WINDOW_SHOWN);
             if (!window) {
                 fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
                 headless = true;
@@ -131,17 +146,17 @@ int main(int argc, char** argv) {
 
                 texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGB24,
                                             SDL_TEXTUREACCESS_STREAMING,
-                                            RENDER_W, RENDER_H);
+                                            render_w, render_h);
             }
         }
     }
 
     // Allocate render buffers
-    std::vector<uint8_t> fb_data(static_cast<size_t>(RENDER_W) * RENDER_H * 3, 0);
-    std::vector<uint16_t> db_data(static_cast<size_t>(RENDER_W) * RENDER_H, 0xFFFF);
-    Framebuffer fb{fb_data.data(), RENDER_W, RENDER_H};
-    DepthBuffer db{db_data.data(), RENDER_W, RENDER_H};
-    Viewport vp{0.0f, 0.0f, static_cast<float>(RENDER_W), static_cast<float>(RENDER_H), 0.0f, 1.0f};
+    std::vector<uint8_t> fb_data(static_cast<size_t>(render_w) * render_h * 3, 0);
+    std::vector<uint16_t> db_data(static_cast<size_t>(render_w) * render_h, 0xFFFF);
+    Framebuffer fb{fb_data.data(), render_w, render_h};
+    DepthBuffer db{db_data.data(), render_w, render_h};
+    Viewport vp{0.0f, 0.0f, static_cast<float>(render_w), static_cast<float>(render_h), 0.0f, 1.0f};
 
     // State toggles
     bool auto_rotate = true;
@@ -158,7 +173,8 @@ int main(int argc, char** argv) {
     int last_mouse_y = 0;
 
     Profiler profiler;
-    Mat4 proj = mat4_perspective(deg_to_rad(60.0f), (float)RENDER_W / (float)RENDER_H, 0.1f, 100.0f);
+    float aspect = (float)render_w / (float)render_h;
+    Mat4 proj = mat4_perspective(deg_to_rad(60.0f), aspect, 0.1f, 100.0f);
 
     bool running = true;
     int frame_count = 0;
@@ -263,7 +279,7 @@ int main(int argc, char** argv) {
         // Stage 4: Present (display texture transfer)
         profiler.begin_stage(ProfileStage::Present);
         if (!headless && texture && renderer) {
-            SDL_UpdateTexture(texture, nullptr, fb_data.data(), RENDER_W * 3);
+            SDL_UpdateTexture(texture, nullptr, fb_data.data(), render_w * 3);
             SDL_RenderClear(renderer);
             SDL_RenderCopy(renderer, texture, nullptr, nullptr);
             SDL_RenderPresent(renderer);

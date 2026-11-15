@@ -198,28 +198,44 @@ void st7789_draw_rgb888_buffer(int dst_x, int dst_y, int w, int h, const uint8_t
 {
     if (!s_spi || !rgb888_data || w <= 0 || h <= 0) return;
 
-    // Allocate 1-line DMA-capable buffer
-    uint16_t *line_buf = heap_caps_malloc(w * sizeof(uint16_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    if (!line_buf) {
-        ESP_LOGE(TAG, "Failed to allocate line buffer for blit");
-        return;
+    // Use a persistent 16-line DMA-capable chunk buffer to eliminate per-frame malloc overhead
+    const int chunk_lines = 16;
+    static uint16_t *s_chunk_buf = NULL;
+    static size_t s_chunk_cap = 0;
+
+    size_t needed_pixels = (size_t)w * chunk_lines;
+    if (!s_chunk_buf || s_chunk_cap < needed_pixels) {
+        if (s_chunk_buf) free(s_chunk_buf);
+        s_chunk_buf = (uint16_t *)heap_caps_malloc(needed_pixels * sizeof(uint16_t), MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+        if (!s_chunk_buf) {
+            ESP_LOGE(TAG, "Failed to allocate DMA chunk buffer for RGB888 blit");
+            return;
+        }
+        s_chunk_cap = needed_pixels;
     }
 
     lcd_set_window(dst_x, dst_y, dst_x + w - 1, dst_y + h - 1);
 
-    for (int row = 0; row < h; ++row) {
-        const uint8_t *src_row = rgb888_data + (row * w * 3);
-        for (int col = 0; col < w; ++col) {
-            uint8_t r = src_row[col * 3 + 0];
-            uint8_t g = src_row[col * 3 + 1];
-            uint8_t b = src_row[col * 3 + 2];
+    int row = 0;
+    while (row < h) {
+        int lines_this_chunk = (row + chunk_lines <= h) ? chunk_lines : (h - row);
+        size_t pixels_this_chunk = (size_t)w * lines_this_chunk;
 
-            // Convert RGB888 -> RGB565 and byte-swap for SPI
-            uint16_t rgb565 = ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3);
-            line_buf[col] = (rgb565 >> 8) | (rgb565 << 8);
+        for (int r = 0; r < lines_this_chunk; ++r) {
+            const uint8_t *src_row = rgb888_data + ((row + r) * w * 3);
+            uint16_t *dst_row = s_chunk_buf + (r * w);
+            for (int col = 0; col < w; ++col) {
+                uint8_t cr = src_row[col * 3 + 0];
+                uint8_t cg = src_row[col * 3 + 1];
+                uint8_t cb = src_row[col * 3 + 2];
+
+                // Convert RGB888 -> RGB565 and byte-swap for SPI
+                uint16_t rgb565 = ((cr & 0xF8) << 8) | ((cg & 0xFC) << 3) | (cb >> 3);
+                dst_row[col] = (rgb565 >> 8) | (rgb565 << 8);
+            }
         }
-        lcd_data((const uint8_t *)line_buf, w * sizeof(uint16_t));
-    }
 
-    free(line_buf);
+        lcd_data((const uint8_t *)s_chunk_buf, pixels_this_chunk * sizeof(uint16_t));
+        row += lines_this_chunk;
+    }
 }
