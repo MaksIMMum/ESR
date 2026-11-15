@@ -148,6 +148,111 @@ struct DepthSetup {
     int32_t dzdy = 0;       // Per-pixel depth step in y
 };
 
+struct VaryingSetup {
+    float start[ESR_MAX_VARYINGS] = {0.0f};
+    float dvdx[ESR_MAX_VARYINGS]  = {0.0f};
+    float dvdy[ESR_MAX_VARYINGS]  = {0.0f};
+    uint8_t count = 0;
+};
+
+/**
+ * Walk the AABB for custom pixel shader invocation with varying interpolation.
+ */
+template <typename T, bool HasDepth>
+int walk_shader(Framebuffer& fb, int minx, int miny, int maxx, int maxy,
+                const Edge e[3], const VaryingSetup& v_setup, const DepthSetup& d,
+                PixelShader pixel_shader, const void* uniforms) {
+    const T sx0 = static_cast<T>(e[0].step_x);
+    const T sx1 = static_cast<T>(e[1].step_x);
+    const T sx2 = static_cast<T>(e[2].step_x);
+    const T sy0 = static_cast<T>(e[0].step_y);
+    const T sy1 = static_cast<T>(e[1].step_y);
+    const T sy2 = static_cast<T>(e[2].step_y);
+
+    T row0 = static_cast<T>(e[0].biased);
+    T row1 = static_cast<T>(e[1].biased);
+    T row2 = static_cast<T>(e[2].biased);
+    int32_t row_z = d.z;
+
+    float row_v[ESR_MAX_VARYINGS];
+    for (uint8_t k = 0; k < v_setup.count; ++k) {
+        row_v[k] = v_setup.start[k];
+    }
+
+    const int pitch = fb.width * 3;
+    uint8_t* row_ptr = fb.color + (static_cast<long>(miny) * fb.width + minx) * 3;
+
+    uint16_t* depth_row_ptr = nullptr;
+    int depth_pitch = 0;
+    if constexpr (HasDepth) {
+        depth_pitch = d.db->width;
+        depth_row_ptr = d.db->data + (static_cast<long>(miny) * d.db->width + minx);
+    }
+
+    int written = 0;
+
+    for (int y = miny; y <= maxy; ++y) {
+        T w0 = row0, w1 = row1, w2 = row2;
+        int32_t z = row_z;
+        uint8_t* p = row_ptr;
+        uint16_t* dp = depth_row_ptr;
+        bool entered = false;
+
+        float cur_v[ESR_MAX_VARYINGS];
+        for (uint8_t k = 0; k < v_setup.count; ++k) {
+            cur_v[k] = row_v[k];
+        }
+
+        for (int x = minx; x <= maxx; ++x) {
+            if ((w0 | w1 | w2) >= 0) {
+                entered = true;
+
+                bool pass = true;
+                if constexpr (HasDepth) {
+                    const uint16_t frag_z = to_u16_depth(z);
+                    if (eval_depth_test(frag_z, *dp, d.func)) {
+                        *dp = frag_z;
+                    } else {
+                        pass = false;
+                    }
+                }
+
+                if (pass) {
+                    uint16_t col565 = pixel_shader(cur_v, uniforms);
+                    p[0] = esr_rgb565_r(col565);
+                    p[1] = esr_rgb565_g(col565);
+                    p[2] = esr_rgb565_b(col565);
+                    ++written;
+                }
+            } else if (entered) {
+                break;
+            }
+
+            w0 += sx0; w1 += sx1; w2 += sx2;
+            for (uint8_t k = 0; k < v_setup.count; ++k) {
+                cur_v[k] += v_setup.dvdx[k];
+            }
+            if constexpr (HasDepth) {
+                z += d.dzdx;
+                ++dp;
+            }
+            p += 3;
+        }
+
+        row0 += sy0; row1 += sy1; row2 += sy2;
+        for (uint8_t k = 0; k < v_setup.count; ++k) {
+            row_v[k] += v_setup.dvdy[k];
+        }
+        row_ptr += pitch;
+        if constexpr (HasDepth) {
+            row_z += d.dzdy;
+            depth_row_ptr += depth_pitch;
+        }
+    }
+
+    return written;
+}
+
 /**
  * Walk the AABB. T is int32_t (fast path) or int64_t (huge triangles).
  * HasDepth enables zero-overhead compile-time elimination of depth testing when false.
@@ -240,7 +345,9 @@ int rasterize_line(const ScreenVertex& v0,
                    const ScreenVertex& v1,
                    Framebuffer& fb,
                    DepthBuffer* db,
-                   DepthFunc depth_func) {
+                   DepthFunc depth_func,
+                   PixelShader pixel_shader,
+                   const void* uniforms) {
     if (fb.color == nullptr || fb.width <= 0 || fb.height <= 0) {
         return 0;
     }
@@ -275,6 +382,15 @@ int rasterize_line(const ScreenVertex& v0,
     int32_t z = to_depth_fixed(v0.z);
     int32_t dz = to_depth_gradient_fixed((v1.z - v0.z) * inv_steps);
 
+    // Varyings interpolation for custom pixel shader
+    float cur_v[ESR_MAX_VARYINGS];
+    float dv[ESR_MAX_VARYINGS];
+    const uint8_t var_count = v0.varying_count;
+    for (uint8_t k = 0; k < var_count; ++k) {
+        cur_v[k] = v0.varyings[k];
+        dv[k] = (v1.varyings[k] - v0.varyings[k]) * inv_steps;
+    }
+
     int written = 0;
     const bool has_depth = (db != nullptr && db->data != nullptr &&
                             db->width == fb.width && db->height == fb.height);
@@ -294,9 +410,16 @@ int rasterize_line(const ScreenVertex& v0,
 
             if (pass) {
                 uint8_t* p = fb.color + (y0 * fb.width + x0) * 3;
-                p[0] = to_u8(r);
-                p[1] = to_u8(g);
-                p[2] = to_u8(b);
+                if (pixel_shader != nullptr) {
+                    uint16_t col565 = pixel_shader(cur_v, uniforms);
+                    p[0] = esr_rgb565_r(col565);
+                    p[1] = esr_rgb565_g(col565);
+                    p[2] = esr_rgb565_b(col565);
+                } else {
+                    p[0] = to_u8(r);
+                    p[1] = to_u8(g);
+                    p[2] = to_u8(b);
+                }
                 ++written;
             }
         }
@@ -317,6 +440,9 @@ int rasterize_line(const ScreenVertex& v0,
         g += dg;
         b += db_col;
         z += dz;
+        for (uint8_t k = 0; k < var_count; ++k) {
+            cur_v[k] += dv[k];
+        }
     }
 
     return written;
@@ -326,7 +452,9 @@ int rasterize_triangle(const ScreenTriangle& tri,
                        Framebuffer& fb,
                        DepthBuffer* db,
                        DepthFunc depth_func,
-                       PolygonMode polygon_mode) {
+                       PolygonMode polygon_mode,
+                       PixelShader pixel_shader,
+                       const void* uniforms) {
     if (fb.color == nullptr || fb.width <= 0 || fb.height <= 0) {
         return 0;
     }
@@ -334,9 +462,9 @@ int rasterize_triangle(const ScreenTriangle& tri,
     // Wireframe polygon mode: rasterize 3 edges with Bresenham line algorithm
     if (polygon_mode == PolygonMode::Wireframe) {
         int w = 0;
-        w += rasterize_line(tri.v[0], tri.v[1], fb, db, depth_func);
-        w += rasterize_line(tri.v[1], tri.v[2], fb, db, depth_func);
-        w += rasterize_line(tri.v[2], tri.v[0], fb, db, depth_func);
+        w += rasterize_line(tri.v[0], tri.v[1], fb, db, depth_func, pixel_shader, uniforms);
+        w += rasterize_line(tri.v[1], tri.v[2], fb, db, depth_func, pixel_shader, uniforms);
+        w += rasterize_line(tri.v[2], tri.v[0], fb, db, depth_func, pixel_shader, uniforms);
         return w;
     }
 
@@ -351,11 +479,13 @@ int rasterize_triangle(const ScreenTriangle& tri,
     // 1. Snap to 28.4 fixed point.
     int32_t X[3], Y[3];
     const Vec3* col[3];
+    const float* var[3];
     float Z[3];
     for (int i = 0; i < 3; ++i) {
         X[i] = to_fixed(tri.v[i].x);
         Y[i] = to_fixed(tri.v[i].y);
         col[i] = &tri.v[i].color;
+        var[i] = tri.v[i].varyings;
         Z[i] = tri.v[i].z;
     }
 
@@ -370,6 +500,7 @@ int rasterize_triangle(const ScreenTriangle& tri,
         t = X[1]; X[1] = X[2]; X[2] = t;
         t = Y[1]; Y[1] = Y[2]; Y[2] = t;
         const Vec3* tc = col[1]; col[1] = col[2]; col[2] = tc;
+        const float* tv = var[1]; var[1] = var[2]; var[2] = tv;
         float tz = Z[1]; Z[1] = Z[2]; Z[2] = tz;
         area = -area;
     }
@@ -443,6 +574,33 @@ int rasterize_triangle(const ScreenTriangle& tri,
                          fits_int32(e[1], span_x, span_y) &&
                          fits_int32(e[2], span_x, span_y);
 
+    // If custom pixel shader is bound, invoke walk_shader with varying interpolation
+    if (pixel_shader != nullptr) {
+        VaryingSetup v_setup;
+        v_setup.count = tri.v[0].varying_count;
+        for (uint8_t k = 0; k < v_setup.count; ++k) {
+            float val0 = var[0][k];
+            float val1 = var[1][k];
+            float val2 = var[2][k];
+            v_setup.start[k] = w0 * val0 + w1 * val1 + w2 * val2;
+            v_setup.dvdx[k]  = dx0 * val0 + dx1 * val1 + dx2 * val2;
+            v_setup.dvdy[k]  = dy0 * val0 + dy1 * val1 + dy2 * val2;
+        }
+
+        if (has_depth) {
+            if (fits_32) {
+                return walk_shader<int32_t, true>(fb, minx, miny, maxx, maxy, e, v_setup, d, pixel_shader, uniforms);
+            }
+            return walk_shader<int64_t, true>(fb, minx, miny, maxx, maxy, e, v_setup, d, pixel_shader, uniforms);
+        } else {
+            if (fits_32) {
+                return walk_shader<int32_t, false>(fb, minx, miny, maxx, maxy, e, v_setup, d, pixel_shader, uniforms);
+            }
+            return walk_shader<int64_t, false>(fb, minx, miny, maxx, maxy, e, v_setup, d, pixel_shader, uniforms);
+        }
+    }
+
+    // Fast-path: default fixed-point Gouraud rasterization
     if (has_depth) {
         if (fits_32) {
             return walk<int32_t, true>(fb, minx, miny, maxx, maxy, e, c, d);

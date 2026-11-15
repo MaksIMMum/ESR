@@ -82,13 +82,17 @@ int rasterize_line(const ScreenVertex& v0,
                    const ScreenVertex& v1,
                    Framebuffer& fb,
                    DepthBuffer* db = nullptr,
-                   DepthFunc depth_func = DepthFunc::Less);
+                   DepthFunc depth_func = DepthFunc::Less,
+                   PixelShader pixel_shader = nullptr,
+                   const void* uniforms = nullptr);
 
 int rasterize_triangle(const ScreenTriangle& tri,
                        Framebuffer& fb,
                        DepthBuffer* db = nullptr,
                        DepthFunc depth_func = DepthFunc::Less,
-                       PolygonMode polygon_mode = PolygonMode::Fill);
+                       PolygonMode polygon_mode = PolygonMode::Fill,
+                       PixelShader pixel_shader = nullptr,
+                       const void* uniforms = nullptr);
 
 } // namespace esr
 
