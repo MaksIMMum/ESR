@@ -198,14 +198,17 @@ void Profiler::draw_hud(Framebuffer& fb, int x, int y, bool compact) const {
     cur_y += 9;
 
     // Line 3: Triangle stats and Culling % (Warm Yellow)
-    snprintf(line, sizeof(line), "Tri:%d/%d (%2.0f%%c)",
-             m_stats.tris_drawn, m_stats.tris_submitted, m_stats.cull_percentage);
+    snprintf(line, sizeof(line), "Tri:%lu/%lu (%2.0f%%c)",
+             static_cast<unsigned long>(m_stats.tris_drawn),
+             static_cast<unsigned long>(m_stats.tris_submitted),
+             m_stats.cull_percentage);
     draw_text(fb, x, cur_y, line, 255, 230, 70, true);
     cur_y += 9;
 
     // Line 4: Memory footprint (Soft Magenta)
-    snprintf(line, sizeof(line), "SRAM:%3dK Px:%d",
-             static_cast<int>(m_stats.free_sram_bytes / 1024), m_stats.pixels_drawn);
+    snprintf(line, sizeof(line), "SRAM:%3dK Px:%lu",
+             static_cast<int>(m_stats.free_sram_bytes / 1024),
+             static_cast<unsigned long>(m_stats.pixels_drawn));
     draw_text(fb, x, cur_y, line, 255, 160, 255, true);
 }
 
@@ -213,17 +216,17 @@ void Profiler::print_telemetry(FILE* stream) const {
     if (!stream) stream = stdout;
     fprintf(stream,
             "[ESR Profiler] Frame %4llu | FPS: %5.1f | Frame: %5.2f ms | "
-            "Geom: %4.2f ms | Rast: %4.2f ms | Tris: %3d/%3d (culled %2.0f%%) | "
-            "Fill: %5d px (%5.1f kpx/s) | Free SRAM: %3zu KB\n",
+            "Geom: %4.2f ms | Rast: %4.2f ms | Tris: %3lu/%3lu (culled %2.0f%%) | "
+            "Fill: %5lu px (%5.1f kpx/s) | Free SRAM: %3zu KB\n",
             static_cast<unsigned long long>(m_stats.total_frames),
             m_stats.fps,
             m_stats.frame_time_ms,
             m_stats.geom_time_ms,
             m_stats.rast_time_ms,
-            m_stats.tris_drawn,
-            m_stats.tris_submitted,
+            static_cast<unsigned long>(m_stats.tris_drawn),
+            static_cast<unsigned long>(m_stats.tris_submitted),
             m_stats.cull_percentage,
-            m_stats.pixels_drawn,
+            static_cast<unsigned long>(m_stats.pixels_drawn),
             m_stats.pixels_per_sec / 1000.0f,
             m_stats.free_sram_bytes / 1024);
 }
