@@ -26,10 +26,11 @@ int draw_mesh(const Mesh3D& mesh,
         if (profiler) profiler->begin_stage(ProfileStage::Geometry);
         if (state.vertex_shader) {
             tri_count = process_triangle(&v0, &v1, &v2, state.vertex_shader, uniforms,
-                                         vp, out_triangles, state.cull_mode, state.front_face);
+                                         vp, out_triangles, state.cull_mode, state.front_face,
+                                         state.interp_mode);
         } else {
             tri_count = process_triangle(v0, v1, v2, mvp, vp, out_triangles,
-                                         state.cull_mode, state.front_face);
+                                         state.cull_mode, state.front_face, state.interp_mode);
         }
         if (profiler) profiler->end_stage(ProfileStage::Geometry);
 
@@ -38,7 +39,7 @@ int draw_mesh(const Mesh3D& mesh,
         for (int t = 0; t < tri_count; ++t) {
             total_pixels += rasterize_triangle(out_triangles[t], fb, db,
                                                state.depth_func, state.polygon_mode,
-                                               state.pixel_shader, uniforms);
+                                               state.pixel_shader, uniforms, state.interp_mode);
         }
         if (profiler) profiler->end_stage(ProfileStage::Raster);
     }
