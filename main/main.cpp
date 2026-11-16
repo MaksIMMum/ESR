@@ -11,9 +11,7 @@
 #include "esr/esr_profiler.hpp"
 #include "esr/esr_font.hpp"
 
-#include "models/cube.h"
-#include "models/icosphere.h"
-#include "models/pyramid.h"
+#include "models/car.h"
 
 #ifdef ESP_PLATFORM
 #include "freertos/FreeRTOS.h"
@@ -36,8 +34,8 @@
 //   - 240x240 : ~281 KB -> Automatically routes to 8MB Octal PSRAM (~22 FPS)
 //   - 240x320 : ~375 KB -> Automatically routes to 8MB Octal PSRAM (~16 FPS)
 // ============================================================================
-#define RENDER_W 160
-#define RENDER_H 120
+#define RENDER_W 240
+#define RENDER_H 320
 
 static void clear_framebuffer(uint8_t* fb, int w, int h, uint8_t r, uint8_t g, uint8_t b)
 {
@@ -152,32 +150,10 @@ extern "C" void app_main(void)
     Mat4 proj = mat4_perspective(deg_to_rad(60.0f), aspect, 0.1f, 100.0f);
     Viewport vp = {0.0f, 0.0f, (float)RENDER_W, (float)RENDER_H, 0.0f, 1.0f};
 
-    // Showcase meshes
-    const Mesh3D* meshes[] = {
-        &CUBE_MESH,
-        &ICOSPHERE_MESH,
-        &PYRAMID_MESH
-    };
-    const char* mesh_names[] = {
-        "Cube (12 tris)",
-        "Icosphere (80 tris)",
-        "Pyramid (6 tris)"
-    };
-    const float camera_dist[] = {
-        (aspect < 1.0f) ? 4.2f : 3.4f,
-        (aspect < 1.0f) ? 3.4f : 2.8f,
-        (aspect < 1.0f) ? 3.8f : 3.2f
-    };
-    const WindingOrder winding[] = {
-        WindingOrder::CW,
-        WindingOrder::CCW,
-        WindingOrder::CW
-    };
-    const int num_meshes = sizeof(meshes) / sizeof(meshes[0]);
-
-    int mesh_idx = 0;
+    // Showcase: Neon Race Car only
+    const float car_dist = (aspect < 1.0f) ? 3.0f : 2.5f;
     uint32_t frame_count = 0;
-    float angle_x = deg_to_rad(20.0f);
+    float angle_x = deg_to_rad(18.0f); // Showroom elevation angle
     float angle_y = 0.0f;
     PolygonMode poly_mode = PolygonMode::Fill;
 
@@ -190,30 +166,31 @@ extern "C" void app_main(void)
         clear_depth(depth_buf, 0xFFFF);
         profiler.end_stage(ProfileStage::Clear);
 
-        // Animation update
-        angle_y += deg_to_rad(2.2f);
-        angle_x += deg_to_rad(0.9f);
+        // Smooth horizontal turntable orbit
+        angle_y += deg_to_rad(2.0f);
         if (angle_y > 2.0f * 3.14159265f) angle_y -= 2.0f * 3.14159265f;
-        if (angle_x > 2.0f * 3.14159265f) angle_x -= 2.0f * 3.14159265f;
 
         // Camera View & Model matrix with rotation
-        Mat4 view = mat4_look_at(vec3(0.0f, 0.0f, camera_dist[mesh_idx]), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
+        Mat4 view = mat4_look_at(vec3(0.0f, 0.0f, car_dist), vec3(0.0f, 0.0f, 0.0f), vec3(0.0f, 1.0f, 0.0f));
         Mat4 rot_y = mat4_rotate_y(angle_y);
         Mat4 rot_x = mat4_rotate_x(angle_x);
         Mat4 model = mat4_mul_mat4(rot_x, rot_y);
         Mat4 mvp   = mat4_mul_mat4(proj, mat4_mul_mat4(view, model));
 
-        // Pipeline configuration
+        // Pipeline configuration: textured car with perspective-correct interpolation
         PipelineState state;
         state.cull_mode = (poly_mode == PolygonMode::Fill) ? CullMode::Back : CullMode::None;
-        state.front_face = winding[mesh_idx];
+        state.front_face = WindingOrder::CCW;
         state.polygon_mode = poly_mode;
+        state.interp_mode = InterpMode::Perspective;
+        state.vertex_shader = car_vertex_shader;
+        state.pixel_shader = car_pixel_shader;
+        esr_set_uniforms(state, &mvp);
 
         // Stage 2 & 3: Geometry & Raster (automatically measured by draw_mesh)
-        const Mesh3D& current_mesh = *meshes[mesh_idx];
-        int pixels_drawn = draw_mesh(current_mesh, mvp, vp, fb_target, &depth_buf, state, &profiler);
+        int pixels_drawn = draw_mesh(CAR_MESH, mvp, vp, fb_target, &depth_buf, state, &profiler);
 
-        uint32_t total_mesh_tris = current_mesh.index_count / 3;
+        uint32_t total_mesh_tris = CAR_MESH.index_count / 3;
         uint32_t tris_drawn = (state.cull_mode != CullMode::None) ? (total_mesh_tris / 2) : total_mesh_tris;
 
         // Stage 4: Real-time on-screen HUD overlay
@@ -240,18 +217,6 @@ extern "C" void app_main(void)
         profiler.log_periodic(30, stdout);
 
         frame_count++;
-
-        // Auto-switch models every 180 frames (~3-5 seconds)
-        if (frame_count % 180 == 0) {
-            mesh_idx = (mesh_idx + 1) % num_meshes;
-            // Toggle wireframe on alternate mesh cycles
-            if (mesh_idx == 0) {
-                poly_mode = (poly_mode == PolygonMode::Fill) ? PolygonMode::Wireframe : PolygonMode::Fill;
-                printf("\n[ESR] Switched Polygon Mode to: %s\n",
-                       (poly_mode == PolygonMode::Fill) ? "SOLID FILL" : "WIREFRAME");
-            }
-            printf("\n[ESR] Switched Mesh to: %s\n", mesh_names[mesh_idx]);
-        }
 
 #ifdef ESP_PLATFORM
         // Yield 1 tick to FreeRTOS idle task to feed watchdog timer

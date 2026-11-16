@@ -32,8 +32,7 @@
 #include "esr/esr_mesh.hpp"
 #include "esr/esr_shader.hpp"
 #include "esr/esr_profiler.hpp"
-#include "models/cube.h"
-#include "models/icosphere.h"
+#include "models/car.h"
 
 using namespace esr;
 
@@ -43,41 +42,6 @@ static const int WINDOW_SCALE = 5; // 800 x 600 window
 static const int WINDOW_W = RENDER_W * WINDOW_SCALE;
 static const int WINDOW_H = RENDER_H * WINDOW_SCALE;
 
-struct LightUniforms {
-    Mat4 mvp;
-    Vec3 light_dir;
-    Vec3 light_color;
-    Vec3 ambient;
-    Vec3 obj_color;
-};
-
-static void lighting_vs(const void* in_vertex, esr_vertex_out_t* out_vertex, const void* uniforms) {
-    const auto* v = static_cast<const Vertex3D*>(in_vertex);
-    const auto* u = static_cast<const LightUniforms*>(uniforms);
-
-    out_vertex->clip_pos = mat4_mul_vec4(u->mvp, vec4_from_vec3(v->position, 1.0f));
-
-    // Spherical normal
-    Vec3 normal = vec3_normalize(v->position);
-    out_vertex->varyings.data[0] = normal.x;
-    out_vertex->varyings.data[1] = normal.y;
-    out_vertex->varyings.data[2] = normal.z;
-    out_vertex->varyings.count = 3;
-}
-
-static uint16_t lighting_ps(const float* varyings, const void* uniforms) {
-    const auto* u = static_cast<const LightUniforms*>(uniforms);
-
-    Vec3 normal = vec3_normalize(Vec3{varyings[0], varyings[1], varyings[2]});
-    float n_dot_l = vec3_dot(normal, u->light_dir);
-    if (n_dot_l < 0.0f) n_dot_l = 0.0f;
-
-    float intensity = 0.15f + 0.85f * n_dot_l;
-    Vec3 col = vec3_scale(u->obj_color, intensity);
-
-    return esr_pack_rgb565(col.x, col.y, col.z);
-}
-
 int main(int argc, char** argv) {
     bool headless = false;
     bool vsync = false;
@@ -85,10 +49,24 @@ int main(int argc, char** argv) {
     int render_w = RENDER_W;
     int render_h = RENDER_H;
     int window_scale = WINDOW_SCALE;
+    const char* screenshot_path = nullptr;
+    const char* dump_frames_dir = nullptr;
+    float rot_step = 1.0f;
+    bool enable_hud = true;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--headless") == 0) headless = true;
         else if (strcmp(argv[i], "--vsync") == 0) vsync = true;
+        else if (strcmp(argv[i], "--no-hud") == 0) enable_hud = false;
+        else if (strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
+            screenshot_path = argv[++i];
+        }
+        else if (strcmp(argv[i], "--dump-frames") == 0 && i + 1 < argc) {
+            dump_frames_dir = argv[++i];
+        }
+        else if (strcmp(argv[i], "--rot-step") == 0 && i + 1 < argc) {
+            rot_step = static_cast<float>(atof(argv[++i]));
+        }
         else if (strcmp(argv[i], "--esp32-screen") == 0 || strcmp(argv[i], "--240x320") == 0) {
             render_w = 240;
             render_h = 320;
@@ -109,11 +87,9 @@ int main(int argc, char** argv) {
     printf("   Render resolution: %dx%d (Window: %dx%d)          \n",
            render_w, render_h, window_w, window_h);
     printf("   Controls:                                         \n");
-    printf("     [SPACE]   : Toggle rotation                     \n");
+    printf("     [SPACE]   : Toggle auto-turntable               \n");
     printf("     [W]       : Toggle Wireframe / Solid Fill       \n");
     printf("     [C]       : Toggle Backface Culling             \n");
-    printf("     [L]       : Toggle Lighting Shader (N · L)      \n");
-    printf("     [M]       : Switch Mesh (Icosphere / Cube)      \n");
     printf("     [V]       : Toggle V-Sync (Capped vs Uncapped)  \n");
     printf("     [H]       : Toggle Profiler HUD Overlay         \n");
     printf("     [I]       : Cycle Interp (Flat/Screen/Persp)    \n");
@@ -163,10 +139,8 @@ int main(int argc, char** argv) {
     bool auto_rotate = true;
     bool wireframe = false;
     bool culling = true;
-    bool lighting = true;
-    bool hud = true;
+    bool hud = enable_hud;
     InterpMode interp_mode = InterpMode::Perspective;
-    int current_mesh = 0; // 0 = Icosphere, 1 = Cube
 
     float rot_x = 20.0f;
     float rot_y = 0.0f;
@@ -194,8 +168,6 @@ int main(int argc, char** argv) {
                         case SDLK_SPACE: auto_rotate = !auto_rotate; break;
                         case SDLK_w: wireframe = !wireframe; break;
                         case SDLK_c: culling = !culling; break;
-                        case SDLK_l: lighting = !lighting; break;
-                        case SDLK_m: current_mesh = (current_mesh + 1) % 2; break;
                         case SDLK_v:
                             vsync = !vsync;
                             SDL_GL_SetSwapInterval(vsync ? 1 : 0);
@@ -231,7 +203,7 @@ int main(int argc, char** argv) {
         }
 
         if (auto_rotate) {
-            rot_y += 1.0f;
+            rot_y += rot_step;
         }
 
         // --- Begin Profiling Frame ---
@@ -244,8 +216,8 @@ int main(int argc, char** argv) {
         profiler.end_stage(ProfileStage::Clear);
 
         // Stage 2 & 3: Geometry & Raster
-        const Mesh3D& mesh = (current_mesh == 0) ? ICOSPHERE_MESH : CUBE_MESH;
-        float dist = (current_mesh == 0) ? 2.8f : 3.5f;
+        const Mesh3D& mesh = CAR_MESH;
+        float dist = 2.5f;
         Mat4 model = mat4_mul_mat4(mat4_rotate_x(deg_to_rad(rot_x)),
                                    mat4_rotate_y(deg_to_rad(rot_y)));
         Mat4 view = mat4_look_at({0.0f, 0.0f, dist}, {0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f});
@@ -253,21 +225,12 @@ int main(int argc, char** argv) {
 
         PipelineState state;
         state.cull_mode = culling ? CullMode::Back : CullMode::None;
-        state.front_face = (current_mesh == 0) ? WindingOrder::CCW : WindingOrder::CW;
+        state.front_face = WindingOrder::CCW;
         state.polygon_mode = wireframe ? PolygonMode::Wireframe : PolygonMode::Fill;
         state.interp_mode = interp_mode;
-
-        LightUniforms u;
-        if (lighting && current_mesh == 0) {
-            u.mvp = mvp;
-            u.light_dir = vec3_normalize({0.6f, 0.8f, 0.7f});
-            u.light_color = {1.0f, 1.0f, 1.0f};
-            u.ambient = {0.15f, 0.15f, 0.15f};
-            u.obj_color = {0.2f, 0.85f, 0.95f}; // Cyan/Azure
-            state.vertex_shader = lighting_vs;
-            state.pixel_shader = lighting_ps;
-            esr_set_uniforms(state, &u);
-        }
+        state.vertex_shader = car_vertex_shader;
+        state.pixel_shader = car_pixel_shader;
+        esr_set_uniforms(state, &mvp);
 
         // Geometry & Raster stages are tracked directly inside draw_mesh
         int pixels_drawn = draw_mesh(mesh, mvp, vp, fb, &db, state, &profiler);
@@ -296,9 +259,30 @@ int main(int argc, char** argv) {
         profiler.end_frame(total_mesh_tris, tris_drawn, pixels_drawn);
         profiler.log_periodic(60);
 
+        if (dump_frames_dir) {
+            char fname[512];
+            snprintf(fname, sizeof(fname), "%s/frame_%04d.ppm", dump_frames_dir, frame_count);
+            FILE* f = fopen(fname, "wb");
+            if (f) {
+                fprintf(f, "P6\n%d %d\n255\n", render_w, render_h);
+                fwrite(fb_data.data(), 1, fb_data.size(), f);
+                fclose(f);
+            }
+        }
+
         frame_count++;
         if (max_frames > 0 && frame_count >= max_frames) {
             break;
+        }
+    }
+
+    if (screenshot_path) {
+        FILE* f = fopen(screenshot_path, "wb");
+        if (f) {
+            fprintf(f, "P6\n%d %d\n255\n", render_w, render_h);
+            fwrite(fb_data.data(), 1, fb_data.size(), f);
+            fclose(f);
+            printf("[Viewer] Saved screenshot to %s\n", screenshot_path);
         }
     }
 
