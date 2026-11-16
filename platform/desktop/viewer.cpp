@@ -116,6 +116,7 @@ int main(int argc, char** argv) {
     printf("     [M]       : Switch Mesh (Icosphere / Cube)      \n");
     printf("     [V]       : Toggle V-Sync (Capped vs Uncapped)  \n");
     printf("     [H]       : Toggle Profiler HUD Overlay         \n");
+    printf("     [I]       : Cycle Interp (Flat/Screen/Persp)    \n");
     printf("     [Drag]    : Orbit camera with mouse             \n");
     printf("     [ESC]/[Q] : Exit                                \n");
     printf("   Options:                                          \n");
@@ -164,6 +165,7 @@ int main(int argc, char** argv) {
     bool culling = true;
     bool lighting = true;
     bool hud = true;
+    InterpMode interp_mode = InterpMode::Perspective;
     int current_mesh = 0; // 0 = Icosphere, 1 = Cube
 
     float rot_x = 20.0f;
@@ -202,6 +204,10 @@ int main(int argc, char** argv) {
                                    vsync ? "capped to monitor" : "UNCAPPED");
                             break;
                         case SDLK_h: hud = !hud; break;
+                        case SDLK_i:
+                            interp_mode = static_cast<InterpMode>((static_cast<int>(interp_mode) + 1) % 3);
+                            printf("[Viewer] Interpolation: %s\n", interp_mode_name(interp_mode));
+                            break;
                     }
                 } else if (event.type == SDL_MOUSEBUTTONDOWN) {
                     if (event.button.button == SDL_BUTTON_LEFT) {
@@ -249,6 +255,7 @@ int main(int argc, char** argv) {
         state.cull_mode = culling ? CullMode::Back : CullMode::None;
         state.front_face = (current_mesh == 0) ? WindingOrder::CCW : WindingOrder::CW;
         state.polygon_mode = wireframe ? PolygonMode::Wireframe : PolygonMode::Fill;
+        state.interp_mode = interp_mode;
 
         LightUniforms u;
         if (lighting && current_mesh == 0) {

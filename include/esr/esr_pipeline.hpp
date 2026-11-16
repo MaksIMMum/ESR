@@ -113,6 +113,46 @@ constexpr PolygonMode POLYGON_MODE_FILL      = PolygonMode::Fill;
 constexpr PolygonMode POLYGON_MODE_WIREFRAME = PolygonMode::Wireframe;
 
 /**
+ * Vertex attribute (varying / color) interpolation mode (REQ-3).
+ *
+ *  Flat        - No interpolation. Every fragment of a triangle receives the
+ *                attributes of the provoking vertex, which is v[0] of the input
+ *                triangle (D3D / Vulkan "first vertex" convention). The provoking
+ *                vertex survives near-plane clipping.
+ *  ScreenSpace - Affine (linear) barycentric combination in 2D screen space:
+ *                A = b0*A0 + b1*A1 + b2*A2. Cheapest smooth mode; uses the
+ *                fixed-point fast path when no pixel shader is bound. Distorts
+ *                textures / gradients on surfaces that are not parallel to the
+ *                screen (varying depth across the triangle).
+ *  Perspective - Perspective-correct: A/W and 1/W are linear in screen space,
+ *                so both are interpolated and A = (A/W) / (1/W) is recovered per
+ *                pixel (one reciprocal per shaded pixel). Requires ScreenVertex::inv_w,
+ *                which process_triangle() fills in. Falls back to ScreenSpace if
+ *                any vertex has a non-positive / non-finite inv_w.
+ *
+ * Depth is always interpolated linearly in screen space (z/w is screen-linear).
+ */
+enum class InterpMode : uint8_t {
+    Flat = 0,
+    ScreenSpace = 1,
+    Perspective = 2
+};
+
+constexpr InterpMode INTERP_FLAT         = InterpMode::Flat;
+constexpr InterpMode INTERP_SCREEN_SPACE = InterpMode::ScreenSpace;
+constexpr InterpMode INTERP_PERSPECTIVE  = InterpMode::Perspective;
+
+/** Human-readable name of an interpolation mode (for logs / HUD). */
+inline const char* interp_mode_name(InterpMode mode) {
+    switch (mode) {
+        case InterpMode::Flat:        return "Flat";
+        case InterpMode::ScreenSpace: return "Screen-space";
+        case InterpMode::Perspective: return "Perspective";
+    }
+    return "Unknown";
+}
+
+/**
  * Global pipeline configuration state.
  */
 struct PipelineState {
@@ -120,6 +160,7 @@ struct PipelineState {
     WindingOrder front_face = WindingOrder::CCW;
     PolygonMode polygon_mode = PolygonMode::Fill;
     DepthFunc depth_func = DepthFunc::Less;
+    InterpMode interp_mode = InterpMode::ScreenSpace; // REQ-3: Flat / ScreenSpace / Perspective
 
     // --- Shader Callback Pipeline (REQ-1) ---
     VertexShader vertex_shader = nullptr; // nullptr = default MVP transformation
@@ -236,6 +277,10 @@ ScreenVertex viewport_transform(const Vec3& ndc, float inv_w, const Vec3& color,
  * Full geometry stage for one triangle:
  *   MVP -> Near-plane clipping -> Perspective Divide -> Viewport -> Culling.
  *
+ * With interp_mode == InterpMode::Flat the attributes of v0 (provoking vertex)
+ * are copied to all three vertices before clipping, so every output triangle
+ * carries the original provoking attributes whatever the clipper produces.
+ *
  * @param out_triangles Output array with room for ESR_MAX_CLIPPED_TRIANGLES triangles.
  * @return Number of screen triangles written (0 if the triangle is fully behind
  *         the near plane, degenerate, or culled, otherwise 1 or 2).
@@ -247,7 +292,8 @@ int process_triangle(const Vertex3D& v0,
                      const Viewport& vp,
                      ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
                      CullMode cull_mode = CullMode::None,
-                     WindingOrder front_face = WindingOrder::CCW);
+                     WindingOrder front_face = WindingOrder::CCW,
+                     InterpMode interp_mode = InterpMode::ScreenSpace);
 
 /**
  * Programmable geometry stage for one triangle using a Vertex Shader callback:
@@ -261,7 +307,8 @@ int process_triangle(const void* v0,
                      const Viewport& vp,
                      ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
                      CullMode cull_mode = CullMode::None,
-                     WindingOrder front_face = WindingOrder::CCW);
+                     WindingOrder front_face = WindingOrder::CCW,
+                     InterpMode interp_mode = InterpMode::ScreenSpace);
 
 } // namespace esr
 

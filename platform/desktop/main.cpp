@@ -21,6 +21,64 @@ static void render_screen_triangle(const esr::ScreenTriangle& tri)
     esr::rasterize_triangle(tri, target);
 }
 
+/* ------------------------------------------------------------------ */
+/* REQ-3 test scene: steep checkerboard floor with a per-corner color   */
+/* ramp, rendered once per attribute interpolation mode.               */
+/* ------------------------------------------------------------------ */
+
+struct FloorVertex { esr::Vec3 pos; float u, v; esr::Vec3 color; };
+struct FloorUniforms { esr::Mat4 mvp; };
+
+static void floor_vs(const void* in, esr::esr_vertex_out_t* out, const void* uniforms)
+{
+    const auto* v = static_cast<const FloorVertex*>(in);
+    const auto* u = static_cast<const FloorUniforms*>(uniforms);
+    out->clip_pos = esr::mat4_mul_vec4(u->mvp, esr::vec4_from_vec3(v->pos, 1.0f));
+    out->varyings.data[0] = v->u;
+    out->varyings.data[1] = v->v;
+    out->varyings.data[2] = v->color.x;
+    out->varyings.data[3] = v->color.y;
+    out->varyings.data[4] = v->color.z;
+    out->varyings.count = 5;
+}
+
+static uint16_t floor_ps(const float* vr, const void*)
+{
+    const int cell = ((int)floorf(vr[0] * 8.0f) + (int)floorf(vr[1] * 8.0f)) & 1;
+    const float k = cell ? 1.0f : 0.25f;
+    return esr::esr_pack_rgb565(vr[2] * k, vr[3] * k, vr[4] * k);
+}
+
+static void render_interp_scene(esr::InterpMode mode)
+{
+    using namespace esr;
+    // Floor y = -1 from 1.5 to 20 units in front of the camera: a very steep plane.
+    static const FloorVertex quad[4] = {
+        {{-2.0f, -1.0f,  -1.5f}, 0.0f, 0.0f, {1.0f, 1.0f, 0.2f}},
+        {{ 2.0f, -1.0f,  -1.5f}, 1.0f, 0.0f, {1.0f, 0.3f, 0.3f}},
+        {{ 2.0f, -1.0f, -20.0f}, 1.0f, 1.0f, {0.3f, 0.4f, 1.0f}},
+        {{-2.0f, -1.0f, -20.0f}, 0.0f, 1.0f, {0.3f, 1.0f, 0.4f}},
+    };
+    // Second triangle starts at v3 so Flat mode shows two different provoking colors.
+    static const int idx[6] = {0, 1, 2, 3, 0, 2};
+
+    FloorUniforms uni;
+    uni.mvp = mat4_perspective(deg_to_rad(60.0f), (float)W / (float)H, 0.1f, 100.0f);
+    const Viewport vp = {0.0f, 0.0f, (float)W, (float)H, 0.0f, 1.0f};
+    Framebuffer target{&fb[0][0][0], W, H};
+
+    memset(fb, 0, sizeof(fb));
+    for (int i = 0; i < 6; i += 3) {
+        ScreenTriangle st[ESR_MAX_CLIPPED_TRIANGLES];
+        const int n = process_triangle(&quad[idx[i]], &quad[idx[i + 1]], &quad[idx[i + 2]],
+                                       floor_vs, &uni, vp, st, CullMode::None, WindingOrder::CCW, mode);
+        for (int t = 0; t < n; ++t) {
+            rasterize_triangle(st[t], target, nullptr, DepthFunc::Less, PolygonMode::Fill,
+                               floor_ps, &uni, mode);
+        }
+    }
+}
+
 static int ensure_dir(const char *dir)
 {
 #if defined(_WIN32)
@@ -154,6 +212,24 @@ int main(int argc, char **argv)
 
     // Scale still frame to PNG
     (void)!system("magick output/desktop/frame.ppm -scale 400% output/desktop/frame_4x.png");
+
+    // 6. REQ-3: attribute interpolation modes on a steep textured floor.
+    printf("\nRendering interpolation-mode test scene (steep checkerboard floor)...\n");
+    const struct { InterpMode mode; const char* path; } modes[3] = {
+        {InterpMode::Flat,        "output/desktop/interp_flat.ppm"},
+        {InterpMode::ScreenSpace, "output/desktop/interp_screen.ppm"},
+        {InterpMode::Perspective, "output/desktop/interp_perspective.ppm"},
+    };
+    for (const auto& m : modes) {
+        render_interp_scene(m.mode);
+        save_ppm(m.path);
+        printf("  %-12s -> %s\n", interp_mode_name(m.mode), m.path);
+    }
+    if (system("magick output/desktop/interp_flat.ppm output/desktop/interp_screen.ppm "
+               "output/desktop/interp_perspective.ppm +append -scale 300% "
+               "output/desktop/interp_modes.png") == 0) {
+        printf("Side-by-side comparison (Flat | Screen-space | Perspective): output/desktop/interp_modes.png\n");
+    }
 
     return 0;
 }

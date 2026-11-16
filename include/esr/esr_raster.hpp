@@ -57,6 +57,12 @@ constexpr float ESR_RASTER_GUARD_BAND = 4194304.0f; // 2^22 px
  *    area per triangle).
  *  - Early-Z: if a DepthBuffer is provided, depth comparison is evaluated before
  *    pixel shading, immediately discarding hidden/occluded fragments.
+ *  - Attribute interpolation (colors and shader varyings) follows `interp_mode`:
+ *      Flat        : attributes of tri.v[0] (provoking vertex), zero gradients.
+ *      ScreenSpace : affine barycentric stepping (fixed-point fast path when no
+ *                    pixel shader is bound).
+ *      Perspective : A*inv_w and inv_w are stepped linearly, A = (A*inv_w) / inv_w
+ *                    is recovered per shaded pixel (Hecker). Needs valid inv_w > 0.
  *
  * Both clockwise and counter-clockwise winding are accepted.
  * Degenerate (zero-area) triangles draw nothing.
@@ -69,7 +75,8 @@ constexpr float ESR_RASTER_GUARD_BAND = 4194304.0f; // 2^22 px
  */
 /**
  * Rasterize a 2D screen-space line between two vertices using Bresenham's integer line algorithm.
- * Linearly interpolates RGB vertex colors and depth.
+ * Interpolates RGB vertex colors and varyings according to `interp_mode`
+ * (Flat uses v0), depth is always linear in screen space.
  *
  * @param v0          Start vertex.
  * @param v1          End vertex.
@@ -84,7 +91,8 @@ int rasterize_line(const ScreenVertex& v0,
                    DepthBuffer* db = nullptr,
                    DepthFunc depth_func = DepthFunc::Less,
                    PixelShader pixel_shader = nullptr,
-                   const void* uniforms = nullptr);
+                   const void* uniforms = nullptr,
+                   InterpMode interp_mode = InterpMode::ScreenSpace);
 
 int rasterize_triangle(const ScreenTriangle& tri,
                        Framebuffer& fb,
@@ -92,7 +100,8 @@ int rasterize_triangle(const ScreenTriangle& tri,
                        DepthFunc depth_func = DepthFunc::Less,
                        PolygonMode polygon_mode = PolygonMode::Fill,
                        PixelShader pixel_shader = nullptr,
-                       const void* uniforms = nullptr);
+                       const void* uniforms = nullptr,
+                       InterpMode interp_mode = InterpMode::ScreenSpace);
 
 } // namespace esr
 

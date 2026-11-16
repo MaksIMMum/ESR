@@ -142,7 +142,8 @@ int process_triangle(const void* v0,
                      const Viewport& vp,
                      ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
                      CullMode cull_mode,
-                     WindingOrder front_face) {
+                     WindingOrder front_face,
+                     InterpMode interp_mode) {
     // 1. Programmable Vertex Shader transformation
     VertexOut vo[3];
     vs(v0, &vo[0], uniforms);
@@ -163,7 +164,22 @@ int process_triangle(const void* v0,
         }
     }
 
-    // 2. Near-plane clipping (Clip Space, before any division)
+    // Flat: propagate the provoking vertex (v0) attributes to every vertex before
+    // clipping. Clipped triangles may start at a newly created vertex, so this is
+    // the only point where "v0 of the original triangle" is still known.
+    if (interp_mode == InterpMode::Flat) {
+        for (int i = 1; i < 3; ++i) {
+            clip_tri.v[i].color = clip_tri.v[0].color;
+            clip_tri.v[i].varying_count = clip_tri.v[0].varying_count;
+            for (uint8_t k = 0; k < clip_tri.v[0].varying_count; ++k) {
+                clip_tri.v[i].varyings[k] = clip_tri.v[0].varyings[k];
+            }
+        }
+    }
+
+    // 2. Near-plane clipping (Clip Space, before any division).
+    //    Attributes are lerped linearly in clip space, which is correct for
+    //    perspective-correct interpolation (it happens before the divide).
     ClipTriangle clipped[ESR_MAX_CLIPPED_TRIANGLES];
     const int clipped_count = clip_triangle_near(clip_tri, clipped);
 
@@ -207,9 +223,10 @@ int process_triangle(const Vertex3D& v0,
                      const Viewport& vp,
                      ScreenTriangle out_triangles[ESR_MAX_CLIPPED_TRIANGLES],
                      CullMode cull_mode,
-                     WindingOrder front_face) {
+                     WindingOrder front_face,
+                     InterpMode interp_mode) {
     return process_triangle(&v0, &v1, &v2, default_vertex_shader, &mvp, vp,
-                            out_triangles, cull_mode, front_face);
+                            out_triangles, cull_mode, front_face, interp_mode);
 }
 
 } // namespace esr
