@@ -26,8 +26,10 @@ def parse_obj(filepath):
     Returns:
         vertices: list of (x, y, z) tuples
         faces: list of lists of 0-based vertex indices (triangulated)
+        colors: list of (r, g, b) tuples if present in .obj, else empty list
     """
     vertices = []
+    colors = []
     faces = []
 
     with open(filepath, 'r') as f:
@@ -45,6 +47,9 @@ def parse_obj(filepath):
                     continue
                 x, y, z = float(parts[1]), float(parts[2]), float(parts[3])
                 vertices.append((x, y, z))
+                if len(parts) >= 7:
+                    r, g, b = float(parts[4]), float(parts[5]), float(parts[6])
+                    colors.append((r, g, b))
 
             elif keyword == 'f':
                 # Parse face indices. .obj supports formats like:
@@ -69,7 +74,7 @@ def parse_obj(filepath):
                 for i in range(1, len(face_indices) - 1):
                     faces.append([face_indices[0], face_indices[i], face_indices[i + 1]])
 
-    return vertices, faces
+    return vertices, faces, colors
 
 
 def compute_vertex_colors(vertices):
@@ -176,7 +181,7 @@ def main():
         sys.exit(1)
 
     print(f"Parsing: {args.input}")
-    vertices, faces = parse_obj(args.input)
+    vertices, faces, file_colors = parse_obj(args.input)
 
     if not vertices:
         print("ERROR: No vertices found in .obj file.", file=sys.stderr)
@@ -196,7 +201,11 @@ def main():
         print(f"ERROR: Too many vertices ({len(vertices)}) for uint16_t indices.", file=sys.stderr)
         sys.exit(1)
 
-    colors = compute_vertex_colors(vertices)
+    if file_colors and len(file_colors) == len(vertices):
+        print(f"Using {len(file_colors)} vertex colors from .obj file.")
+        colors = file_colors
+    else:
+        colors = compute_vertex_colors(vertices)
     header = generate_header(args.name, vertices, faces, colors)
 
     # Create output directory if needed
