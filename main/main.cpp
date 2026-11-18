@@ -329,7 +329,7 @@ extern "C" void app_main(void) {
 
 #ifdef ESP_PLATFORM
         // Yield 1 tick to FreeRTOS idle task to feed watchdog timer
-        vTaskDelay(pdMS_TO_TICKS(1));
+        vTaskDelay(1);
 #endif
     }
 

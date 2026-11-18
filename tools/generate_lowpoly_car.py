@@ -115,14 +115,14 @@ def build_car():
 
     # 9. 4 Wheels (Octagonal Cylinders)
     wheel_centers = [
-        (-0.55, -0.10,  0.60, True),
-        ( 0.55, -0.10,  0.60, False),
-        (-0.55, -0.10, -0.60, True),
-        ( 0.55, -0.10, -0.60, False),
+        (-0.52, -0.12,  0.58, True),
+        ( 0.52, -0.12,  0.58, False),
+        (-0.52, -0.11, -0.62, True),
+        ( 0.52, -0.11, -0.62, False),
     ]
 
-    R = 0.15
-    W = 0.12
+    R = 0.135
+    W = 0.10
 
     for (cx, cy, cz, is_left) in wheel_centers:
         x_out = cx - (W/2 if is_left else -W/2)
@@ -136,10 +136,7 @@ def build_car():
             p1 = pts_out[i]
             p2 = pts_out[(i + 1) % 8]
             # Hubcap / rim faces outward along X
-            if is_left:
-                add_tri(center_pt, p1, p2, C_RIM, center=(cx - 1.0, cy, cz))
-            else:
-                add_tri(center_pt, p1, p2, C_RIM, center=(cx + 1.0, cy, cz))
+            add_tri(center_pt, p1, p2, C_RIM, center=(0.0, cy, cz))
 
         for i in range(8):
             o1, o2 = pts_out[i], pts_out[(i + 1) % 8]
