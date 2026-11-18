@@ -216,18 +216,19 @@ void Profiler::print_telemetry(FILE* stream) const {
     if (!stream) stream = stdout;
     fprintf(stream,
             "[ESR Profiler] Frame %4llu | FPS: %5.1f | Frame: %5.2f ms | "
-            "Geom: %4.2f ms | Rast: %4.2f ms | Tris: %3lu/%3lu (culled %2.0f%%) | "
-            "Fill: %5lu px (%5.1f kpx/s) | Free SRAM: %3zu KB\n",
+            "Clear: %4.2f ms | Geom: %4.2f ms | Rast: %4.2f ms | Pres: %4.2f ms | "
+            "Tris: %3lu/%3lu (culled %2.0f%%) | Fill: %5lu px | Free SRAM: %3zu KB\n",
             static_cast<unsigned long long>(m_stats.total_frames),
             m_stats.fps,
             m_stats.frame_time_ms,
+            m_stats.clear_time_ms,
             m_stats.geom_time_ms,
             m_stats.rast_time_ms,
+            m_stats.present_time_ms,
             static_cast<unsigned long>(m_stats.tris_drawn),
             static_cast<unsigned long>(m_stats.tris_submitted),
             m_stats.cull_percentage,
             static_cast<unsigned long>(m_stats.pixels_drawn),
-            m_stats.pixels_per_sec / 1000.0f,
             m_stats.free_sram_bytes / 1024);
 }
 
